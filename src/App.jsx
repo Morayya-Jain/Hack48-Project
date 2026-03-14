@@ -53,7 +53,7 @@ import {
   sanitizeFilePath,
   toPersistedFiles,
 } from './lib/projectFiles'
-import { sanitizeLanguage } from './lib/runtimeUtils'
+import { prettyLanguageName, sanitizeLanguage } from './lib/runtimeUtils'
 
 function toText(value) {
   if (typeof value === 'string') {
@@ -177,12 +177,14 @@ function App() {
   const [uiError, setUiError] = useState('')
   const [previewSrcDoc, setPreviewSrcDoc] = useState('')
   const [previewError, setPreviewError] = useState('')
+  const [fileNotice, setFileNotice] = useState('')
   const [isCheckingBeforeComplete, setIsCheckingBeforeComplete] = useState(false)
   const [isMarkingTaskComplete, setIsMarkingTaskComplete] = useState(false)
   const [isEditingProfile, setIsEditingProfile] = useState(false)
   const lastCheckSignatureRef = useRef('')
   const lastCheckResultRef = useRef(null)
   const saveTimeoutRef = useRef(null)
+  const fileNoticeTimeoutRef = useRef(null)
   const lastSavedFileContentRef = useRef({})
   const importInputRef = useRef(null)
 
@@ -193,6 +195,63 @@ function App() {
   useEffect(() => {
     setIsAuthenticating(isAuthenticating)
   }, [isAuthenticating, setIsAuthenticating])
+
+  useEffect(
+    () => () => {
+      if (fileNoticeTimeoutRef.current) {
+        clearTimeout(fileNoticeTimeoutRef.current)
+      }
+    },
+    [],
+  )
+
+  const showFileLanguageNotice = useCallback((path, language) => {
+    const normalizedLanguage = sanitizeLanguage(language)
+    if (!normalizedLanguage) {
+      return
+    }
+
+    setFileNotice(
+      `Detected ${prettyLanguageName(normalizedLanguage)} from extension for "${path}".`,
+    )
+
+    if (fileNoticeTimeoutRef.current) {
+      clearTimeout(fileNoticeTimeoutRef.current)
+    }
+
+    fileNoticeTimeoutRef.current = window.setTimeout(() => {
+      setFileNotice('')
+    }, 3500)
+  }, [])
+
+  const showImportLanguageNotice = useCallback((files = []) => {
+    const detectedLanguages = Array.from(
+      new Set(
+        files
+          .map((file) => runtimeLanguageFromPath(file?.path || file?.name || ''))
+          .map((language) => sanitizeLanguage(language))
+          .filter(Boolean),
+      ),
+    )
+
+    if (detectedLanguages.length === 0) {
+      return
+    }
+
+    const labels = detectedLanguages.map((language) => prettyLanguageName(language)).join(', ')
+    const languageWord = detectedLanguages.length === 1 ? 'language' : 'languages'
+    const fileWord = files.length === 1 ? 'file' : 'files'
+
+    setFileNotice(`Imported ${files.length} ${fileWord}. Detected ${languageWord}: ${labels}.`)
+
+    if (fileNoticeTimeoutRef.current) {
+      clearTimeout(fileNoticeTimeoutRef.current)
+    }
+
+    fileNoticeTimeoutRef.current = window.setTimeout(() => {
+      setFileNotice('')
+    }, 3500)
+  }, [])
 
   const loadProjects = useCallback(
     async (userId) => {
@@ -805,16 +864,21 @@ function App() {
         return
       }
 
+      const detectedLanguage = runtimeLanguageFromPath(safePath)
+
       const nextFile = {
         id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         path: safePath,
         name: fileNameFromPath(safePath),
-        language: runtimeLanguageFromPath(safePath) || 'javascript',
+        language: detectedLanguage || 'javascript',
         content: '',
         sort_index: projectFiles.length,
       }
 
       setFileError('')
+      if (detectedLanguage) {
+        showFileLanguageNotice(safePath, detectedLanguage)
+      }
       setProjectFiles((prev) => normalizeProjectFiles([...prev, nextFile]))
       setActiveFileId(nextFile.id)
       updateUserCode('')
@@ -822,7 +886,15 @@ function App() {
 
       await persistProjectFile(nextFile)
     },
-    [persistProjectFile, projectFiles, setActiveFileId, setFileError, setProjectFiles, updateUserCode],
+    [
+      persistProjectFile,
+      projectFiles,
+      setActiveFileId,
+      setFileError,
+      setProjectFiles,
+      showFileLanguageNotice,
+      updateUserCode,
+    ],
   )
 
   const handleRenameFile = useCallback(
@@ -843,21 +915,27 @@ function App() {
         return
       }
 
+      const detectedLanguage = runtimeLanguageFromPath(safePath)
+      const nextLanguage = detectedLanguage || target.language || 'javascript'
+
       const renamed = {
         ...target,
         path: safePath,
         name: fileNameFromPath(safePath),
-        language: runtimeLanguageFromPath(safePath) || target.language || 'javascript',
+        language: nextLanguage,
       }
 
       setFileError('')
+      if (detectedLanguage && detectedLanguage !== sanitizeLanguage(target.language || '')) {
+        showFileLanguageNotice(safePath, detectedLanguage)
+      }
       setProjectFiles((prev) =>
         normalizeProjectFiles(prev.map((file) => (file.id === fileId ? renamed : file))),
       )
 
       await persistProjectFile(renamed)
     },
-    [persistProjectFile, projectFiles, setFileError, setProjectFiles],
+    [persistProjectFile, projectFiles, setFileError, setProjectFiles, showFileLanguageNotice],
   )
 
   const handleDeleteFile = useCallback(
@@ -1020,6 +1098,7 @@ function App() {
               'Project file storage is not configured in Supabase yet. Imported files are available for this session only.',
             )
             syncWorkspaceFiles(nextFiles)
+            showImportLanguageNotice(nextFiles)
             return
           }
 
@@ -1028,7 +1107,9 @@ function App() {
           return
         }
 
-        syncWorkspaceFiles(data || nextFiles)
+        const syncedFiles = data || nextFiles
+        syncWorkspaceFiles(syncedFiles)
+        showImportLanguageNotice(syncedFiles)
       } catch (error) {
         console.error(error)
         setFileError(error.message || 'Could not import project file.')
@@ -1041,6 +1122,7 @@ function App() {
       currentProjectId,
       setFileError,
       setIsImporting,
+      showImportLanguageNotice,
       syncWorkspaceFiles,
     ],
   )
@@ -1048,8 +1130,11 @@ function App() {
   const currentTask = tasks[currentTaskIndex] ?? null
   const lockedTaskLanguage = sanitizeLanguage(currentTask?.language)
   const detectedLanguage = useMemo(
-    () => detectLanguage(projectDescription, userCode),
-    [projectDescription, userCode],
+    () =>
+      runtimeLanguageFromPath(activeFile?.path || '') ||
+      sanitizeLanguage(activeFile?.language || '') ||
+      detectLanguage(projectDescription, userCode),
+    [activeFile?.language, activeFile?.path, projectDescription, userCode],
   )
   const runtimeLanguage = lockedTaskLanguage || detectedLanguage
   const editorLanguage = useMemo(
@@ -1540,6 +1625,7 @@ function App() {
       {isAskingFollowUp && <p>Getting mentor reply...</p>}
       {isSavingFiles && <p>Saving project files...</p>}
       {fileError && <p className="text-red-600">{fileError}</p>}
+      {fileNotice && <p className="text-sky-700">{fileNotice}</p>}
 
       <section className="grid grid-cols-1 lg:grid-cols-[300px_1fr_360px] gap-3">
         <Roadmap

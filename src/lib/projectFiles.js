@@ -1,7 +1,22 @@
-import { detectLanguage } from './detectLanguage'
-import { sanitizeLanguage } from './runtimeUtils'
+import { detectLanguage } from './detectLanguage.js'
+import { sanitizeLanguage } from './runtimeUtils.js'
 
 const FILE_NAME_REGEX = /^[a-zA-Z0-9._-]+$/
+const PATH_LANGUAGE_RULES = [
+  { language: 'python', extensions: ['.py'] },
+  { language: 'sql', extensions: ['.sql'] },
+  { language: 'typescript', extensions: ['.ts', '.tsx'] },
+  { language: 'html', extensions: ['.html', '.htm', '.css'] },
+  { language: 'javascript', extensions: ['.js', '.jsx', '.mjs', '.cjs'] },
+  { language: 'java', extensions: ['.java'] },
+  { language: 'csharp', extensions: ['.cs'] },
+  { language: 'go', extensions: ['.go'] },
+  { language: 'rust', extensions: ['.rs'] },
+  { language: 'ruby', extensions: ['.rb'] },
+  { language: 'php', extensions: ['.php'] },
+  { language: 'swift', extensions: ['.swift'] },
+  { language: 'kotlin', extensions: ['.kt', '.kts'] },
+]
 
 function createLocalId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -39,20 +54,10 @@ function fileNameFromPath(path) {
 function runtimeLanguageFromPath(path) {
   const safePath = sanitizeFilePath(path).toLowerCase()
 
-  if (safePath.endsWith('.py')) {
-    return 'python'
-  }
-  if (safePath.endsWith('.sql')) {
-    return 'sql'
-  }
-  if (safePath.endsWith('.ts') || safePath.endsWith('.tsx')) {
-    return 'typescript'
-  }
-  if (safePath.endsWith('.html') || safePath.endsWith('.htm') || safePath.endsWith('.css')) {
-    return 'html'
-  }
-  if (safePath.endsWith('.js') || safePath.endsWith('.jsx')) {
-    return 'javascript'
+  for (const rule of PATH_LANGUAGE_RULES) {
+    if (rule.extensions.some((extension) => safePath.endsWith(extension))) {
+      return rule.language
+    }
   }
 
   return ''
