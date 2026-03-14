@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { buttonPrimary, sizeLg } from '../lib/buttonStyles'
 
 function Onboarding({
   onSubmit,
@@ -44,7 +45,11 @@ function Onboarding({
           </select>
         </label>
 
-        <button type="submit" className="border p-2" disabled={isGeneratingRoadmap}>
+        <button
+          type="submit"
+          className={`${buttonPrimary} ${sizeLg}`}
+          disabled={isGeneratingRoadmap}
+        >
           {isGeneratingRoadmap ? 'Generating roadmap...' : 'Generate roadmap'}
         </button>
       </form>

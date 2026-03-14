@@ -1,8 +1,16 @@
 import { useState } from 'react'
+import {
+  buttonPrimary,
+  buttonSecondary,
+  buttonTab,
+  sizeLg,
+  sizeSm,
+} from '../lib/buttonStyles'
 
 function AuthScreen({
   onSignIn,
   onSignUp,
+  onResendConfirmation,
   isAuthenticating,
   authError,
   authInfo,
@@ -22,6 +30,10 @@ function AuthScreen({
     await onSignUp(email, password)
   }
 
+  const handleResendConfirmation = async () => {
+    await onResendConfirmation(email)
+  }
+
   return (
     <main className="p-4 max-w-md mx-auto">
       <h1 className="text-2xl font-bold mb-4">AI Coding Mentor</h1>
@@ -30,7 +42,7 @@ function AuthScreen({
           type="button"
           onClick={() => setMode('login')}
           disabled={isAuthenticating}
-          className="border px-3 py-1"
+          className={`${mode === 'login' ? buttonPrimary : buttonTab} ${sizeSm}`}
         >
           Log In
         </button>
@@ -38,7 +50,7 @@ function AuthScreen({
           type="button"
           onClick={() => setMode('signup')}
           disabled={isAuthenticating}
-          className="border px-3 py-1"
+          className={`${mode === 'signup' ? buttonPrimary : buttonTab} ${sizeSm}`}
         >
           Sign Up
         </button>
@@ -68,12 +80,24 @@ function AuthScreen({
           />
         </label>
 
-        <button type="submit" disabled={isAuthenticating} className="border p-2">
+        <button
+          type="submit"
+          disabled={isAuthenticating}
+          className={`${buttonPrimary} ${sizeLg}`}
+        >
           {isAuthenticating
             ? 'Authenticating...'
             : mode === 'login'
               ? 'Log In'
               : 'Create Account'}
+        </button>
+        <button
+          type="button"
+          disabled={isAuthenticating || !email.trim()}
+          className={`${buttonSecondary} ${sizeLg}`}
+          onClick={handleResendConfirmation}
+        >
+          Resend confirmation email
         </button>
       </form>
 

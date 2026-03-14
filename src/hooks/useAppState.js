@@ -7,7 +7,7 @@ const initialState = {
   skillLevel: 'beginner',
   tasks: [],
   currentTaskIndex: 0,
-  userCode: '// Start coding here',
+  userCode: '',
   feedbackHistory: [],
   hintsUsed: 0,
   exampleViewed: false,
@@ -74,12 +74,18 @@ export function useAppState() {
     setHintsUsed((prev) => prev + 1)
   }, [])
 
-  const setExampleViewedState = useCallback((value) => {
-    setExampleViewed(value)
+  const setExampleViewedState = useCallback((valueOrUpdater) => {
+    setExampleViewed((prev) => {
+      if (typeof valueOrUpdater === 'function') {
+        return Boolean(valueOrUpdater(prev))
+      }
+
+      return Boolean(valueOrUpdater)
+    })
   }, [])
 
   const resetTaskSupportState = useCallback(() => {
-    setUserCode('// Start coding here')
+    setUserCode('')
     setFeedbackHistory([])
     setHintsUsed(0)
     setExampleViewed(false)

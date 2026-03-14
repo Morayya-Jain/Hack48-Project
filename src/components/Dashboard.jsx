@@ -1,3 +1,11 @@
+import {
+  buttonDanger,
+  buttonPrimary,
+  buttonSecondary,
+  sizeMd,
+  sizeSm,
+} from '../lib/buttonStyles'
+
 function Dashboard({
   projects,
   isLoadingProjects,
@@ -11,7 +19,11 @@ function Dashboard({
     <main className="p-4 flex flex-col gap-4">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Dashboard</h1>
-        <button type="button" className="border px-3 py-1" onClick={onLogOut}>
+        <button
+          type="button"
+          className={`${buttonDanger} ${sizeSm}`}
+          onClick={onLogOut}
+        >
           Log Out
         </button>
       </header>
@@ -19,7 +31,7 @@ function Dashboard({
       <div className="flex gap-2">
         <button
           type="button"
-          className="border px-3 py-2"
+          className={`${buttonPrimary} ${sizeMd}`}
           onClick={onStartNewProject}
           disabled={isLoadingProjects}
         >
@@ -27,7 +39,7 @@ function Dashboard({
         </button>
         <button
           type="button"
-          className="border px-3 py-2"
+          className={`${buttonSecondary} ${sizeMd}`}
           onClick={onRefresh}
           disabled={isLoadingProjects}
         >
@@ -65,7 +77,7 @@ function Dashboard({
               <div>
                 <button
                   type="button"
-                  className="border px-3 py-1"
+                  className={`${buttonSecondary} ${sizeSm}`}
                   onClick={() => onContinueProject(project)}
                 >
                   Continue

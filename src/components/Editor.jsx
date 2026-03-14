@@ -1,22 +1,5 @@
 import MonacoEditor from '@monaco-editor/react'
-
-function detectLanguage(description) {
-  const text = description.toLowerCase()
-
-  if (text.includes('python')) {
-    return 'python'
-  }
-
-  if (text.includes('react') || text.includes('jsx')) {
-    return 'javascript'
-  }
-
-  if (text.includes('html') || text.includes('css')) {
-    return 'html'
-  }
-
-  return 'javascript'
-}
+import { detectLanguage } from '../lib/detectLanguage'
 
 function Editor({ projectDescription, value, onChange, readOnly }) {
   return (
@@ -24,9 +7,9 @@ function Editor({ projectDescription, value, onChange, readOnly }) {
       <h2 className="text-lg font-semibold mb-2">Editor</h2>
       <MonacoEditor
         height="70vh"
-        language={detectLanguage(projectDescription)}
+        language={detectLanguage(projectDescription, value)}
         theme="vs-dark"
-        value={value || '// Start coding here'}
+        value={value ?? ''}
         onChange={(newValue) => onChange(newValue || '')}
         options={{
           readOnly,

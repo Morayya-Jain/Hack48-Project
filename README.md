@@ -33,6 +33,18 @@ Run the SQL block found at the top of:
 
 in the Supabase SQL editor.
 
+### Supabase Auth URL Configuration (Required for Netlify)
+
+In Supabase Dashboard -> Authentication -> URL Configuration:
+
+- Set **Site URL** to your production Netlify URL (for example `https://your-site.netlify.app`)
+- Add redirect URLs for:
+  - Local dev (`http://localhost:5173/**`)
+  - Production site (`https://your-site.netlify.app/**`)
+  - Netlify previews if used (`https://deploy-preview-*.--your-site.netlify.app/**`)
+
+Without these, signup confirmation links and login callbacks can fail in deployed environments.
+
 ## Run
 
 ```bash

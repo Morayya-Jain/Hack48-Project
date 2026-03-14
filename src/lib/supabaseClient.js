@@ -38,7 +38,34 @@ ON tasks FOR ALL USING (auth.uid() = user_id);
 
 import { createClient } from '@supabase/supabase-js'
 
-export const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY,
-)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
+
+const missingSupabaseEnv = []
+if (!supabaseUrl) {
+  missingSupabaseEnv.push('VITE_SUPABASE_URL')
+}
+if (!supabaseAnonKey) {
+  missingSupabaseEnv.push('VITE_SUPABASE_ANON_KEY')
+}
+
+let supabaseClient = null
+let supabaseClientError = null
+
+if (missingSupabaseEnv.length > 0) {
+  supabaseClientError = new Error(
+    `Missing required environment variable${missingSupabaseEnv.length > 1 ? 's' : ''}: ${missingSupabaseEnv.join(', ')}. Add them in Netlify Site configuration > Environment variables and redeploy.`,
+  )
+} else {
+  try {
+    supabaseClient = createClient(supabaseUrl, supabaseAnonKey)
+  } catch (error) {
+    supabaseClientError =
+      error instanceof Error
+        ? error
+        : new Error('Failed to initialize Supabase client.')
+  }
+}
+
+export const supabase = supabaseClient
+export const supabaseInitError = supabaseClientError

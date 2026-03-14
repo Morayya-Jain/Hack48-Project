@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AuthScreen from './components/AuthScreen'
 import CompletionScreen from './components/CompletionScreen'
 import Dashboard from './components/Dashboard'
@@ -8,9 +8,16 @@ import HintBox from './components/HintBox'
 import Onboarding from './components/Onboarding'
 import ProgressBar from './components/ProgressBar'
 import Roadmap from './components/Roadmap'
+import RunConsole from './components/RunConsole'
 import { useAppState } from './hooks/useAppState'
 import { useAuth } from './hooks/useAuth'
 import { useGemini } from './hooks/useGemini'
+import {
+  buttonDanger,
+  buttonPrimary,
+  buttonSecondary,
+  sizeSm,
+} from './lib/buttonStyles'
 import {
   createProject,
   getProjectTasks,
@@ -19,14 +26,35 @@ import {
   markTaskComplete as markTaskCompleteInDb,
   saveTasks,
 } from './lib/db'
+import { detectLanguage } from './lib/detectLanguage'
+
+function toText(value) {
+  if (typeof value === 'string') {
+    return value
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+
+  if (value == null) {
+    return ''
+  }
+
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return ''
+  }
+}
 
 function normalizeTask(task) {
   return {
     id: task.id,
-    title: task.title,
-    description: task.description,
-    hint: task.hint,
-    exampleOutput: task.example_output ?? task.exampleOutput ?? '',
+    title: toText(task.title),
+    description: toText(task.description),
+    hint: toText(task.hint),
+    exampleOutput: toText(task.example_output ?? task.exampleOutput ?? ''),
     completed: Boolean(task.completed),
     task_index: typeof task.task_index === 'number' ? task.task_index : 0,
   }
@@ -42,6 +70,7 @@ function App() {
     signIn,
     signOut,
     signUp,
+    resendConfirmation,
   } = useAuth()
 
   const { generateRoadmap, checkUserCode, askFollowUp } = useGemini()
@@ -69,7 +98,6 @@ function App() {
     setTasks,
     setCurrentTaskIndex,
     updateUserCode,
-    appendFeedback,
     markTaskComplete,
     incrementHints,
     setExampleViewed,
@@ -86,6 +114,10 @@ function App() {
   const [projects, setProjects] = useState([])
   const [screen, setScreen] = useState('dashboard')
   const [uiError, setUiError] = useState('')
+  const lastCheckSignatureRef = useRef('')
+  const lastCheckResponseRef = useRef('')
+  const lastFollowUpSignatureRef = useRef('')
+  const lastFollowUpResponseRef = useRef('')
 
   useEffect(() => {
     setUser(user)
@@ -170,6 +202,19 @@ function App() {
     setUiError('')
     setAuthError(null)
   }, [resetApp, setAuthError, signOut])
+
+  const handleResendConfirmation = useCallback(
+    async (email) => {
+      const { error } = await resendConfirmation(email)
+      if (error) {
+        setUiError(error.message || 'Could not resend confirmation email.')
+        return
+      }
+
+      setUiError('')
+    },
+    [resendConfirmation],
+  )
 
   const handleStartNewProject = useCallback(() => {
     resetApp()
@@ -297,6 +342,10 @@ function App() {
   )
 
   const currentTask = tasks[currentTaskIndex] ?? null
+  const detectedLanguage = useMemo(
+    () => detectLanguage(projectDescription, userCode),
+    [projectDescription, userCode],
+  )
 
   const completedCount = useMemo(
     () => tasks.filter((task) => task.completed).length,
@@ -323,8 +372,20 @@ function App() {
       return
     }
 
+    const checkSignature = `${currentTask.id}::${userCode}`
+
+    if (
+      checkSignature === lastCheckSignatureRef.current &&
+      lastCheckResponseRef.current
+    ) {
+      setUiError('')
+      setFeedbackHistory([{ role: 'ai', message: lastCheckResponseRef.current }])
+      return
+    }
+
     setUiError('')
     setIsCheckingCode(true)
+    setFeedbackHistory([])
 
     try {
       const result = await checkUserCode(currentTask, userCode)
@@ -333,17 +394,22 @@ function App() {
         return
       }
 
-      appendFeedback({
-        role: 'ai',
-        message: result.data,
-      })
+      lastCheckSignatureRef.current = checkSignature
+      lastCheckResponseRef.current = result.data
+      setFeedbackHistory([{ role: 'ai', message: result.data }])
     } catch (error) {
       console.error(error)
       setUiError(error.message || 'Code check failed.')
     } finally {
       setIsCheckingCode(false)
     }
-  }, [appendFeedback, checkUserCode, currentTask, setIsCheckingCode, userCode])
+  }, [
+    checkUserCode,
+    currentTask,
+    setFeedbackHistory,
+    setIsCheckingCode,
+    userCode,
+  ])
 
   const handleFollowUp = useCallback(
     async (userQuestion) => {
@@ -351,11 +417,26 @@ function App() {
         return
       }
 
+      const normalizedQuestion = userQuestion.trim()
+      const followUpSignature = `${currentTask.id}::${userCode}::${normalizedQuestion}`
+
+      if (
+        followUpSignature === lastFollowUpSignatureRef.current &&
+        lastFollowUpResponseRef.current
+      ) {
+        setUiError('')
+        setFeedbackHistory([{ role: 'ai', message: lastFollowUpResponseRef.current }])
+        return
+      }
+
       setUiError('')
       setIsAskingFollowUp(true)
+      setFeedbackHistory([])
 
-      const updatedHistory = [...feedbackHistory, { role: 'user', message: userQuestion }]
-      setFeedbackHistory(updatedHistory)
+      const updatedHistory = [
+        ...feedbackHistory,
+        { role: 'user', message: userQuestion },
+      ]
 
       try {
         const result = await askFollowUp(
@@ -370,7 +451,9 @@ function App() {
           return
         }
 
-        appendFeedback({ role: 'ai', message: result.data })
+        lastFollowUpSignatureRef.current = followUpSignature
+        lastFollowUpResponseRef.current = result.data
+        setFeedbackHistory([{ role: 'ai', message: result.data }])
       } catch (error) {
         console.error(error)
         setUiError(error.message || 'Follow-up request failed.')
@@ -379,7 +462,6 @@ function App() {
       }
     },
     [
-      appendFeedback,
       askFollowUp,
       currentTask,
       feedbackHistory,
@@ -388,6 +470,13 @@ function App() {
       userCode,
     ],
   )
+
+  useEffect(() => {
+    lastCheckSignatureRef.current = ''
+    lastCheckResponseRef.current = ''
+    lastFollowUpSignatureRef.current = ''
+    lastFollowUpResponseRef.current = ''
+  }, [currentTask?.id])
 
   const handleMarkCurrentTaskComplete = useCallback(async () => {
     if (!currentTask) {
@@ -458,6 +547,7 @@ function App() {
       <AuthScreen
         onSignIn={handleSignIn}
         onSignUp={handleSignUp}
+        onResendConfirmation={handleResendConfirmation}
         isAuthenticating={isAuthenticating}
         authError={authError || uiError}
         authInfo={authInfo}
@@ -507,12 +597,16 @@ function App() {
         <div className="flex gap-2">
           <button
             type="button"
-            className="border px-3 py-1"
+            className={`${buttonSecondary} ${sizeSm}`}
             onClick={handleBackToDashboard}
           >
             Dashboard
           </button>
-          <button type="button" className="border px-3 py-1" onClick={handleLogOut}>
+          <button
+            type="button"
+            className={`${buttonDanger} ${sizeSm}`}
+            onClick={handleLogOut}
+          >
             Log Out
           </button>
         </div>
@@ -541,7 +635,7 @@ function App() {
             <p className="mt-2">{currentTask?.description}</p>
             <button
               type="button"
-              className="border px-3 py-1 mt-3"
+              className={`${buttonPrimary} ${sizeSm} mt-3`}
               onClick={handleMarkCurrentTaskComplete}
               disabled={!currentTask || currentTask.completed}
             >
@@ -555,6 +649,11 @@ function App() {
             onChange={updateUserCode}
             readOnly={Boolean(currentTask?.completed) && firstIncompleteIndex !== -1}
           />
+          <RunConsole
+            key={currentTask?.id || 'run-console'}
+            code={userCode}
+            language={detectedLanguage}
+          />
         </div>
 
         <div className="flex flex-col gap-3">
@@ -563,7 +662,7 @@ function App() {
             hintsUsed={hintsUsed}
             exampleViewed={exampleViewed}
             onGiveHint={incrementHints}
-            onShowExample={() => setExampleViewed(true)}
+            onShowExample={() => setExampleViewed((prev) => !prev)}
             isDisabled={!currentTask}
           />
           <FeedbackPanel

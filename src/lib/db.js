@@ -1,6 +1,17 @@
-import { supabase } from './supabaseClient'
+import { supabase, supabaseInitError } from './supabaseClient'
+
+function getSupabaseUnavailableResponse() {
+  return {
+    data: null,
+    error: supabaseInitError || new Error('Supabase is not configured.'),
+  }
+}
 
 export async function createProject(userId, description, skillLevel) {
+  if (!supabase) {
+    return getSupabaseUnavailableResponse()
+  }
+
   try {
     const { data, error } = await supabase
       .from('projects')
@@ -19,6 +30,10 @@ export async function createProject(userId, description, skillLevel) {
 }
 
 export async function saveTasks(projectId, userId, tasks) {
+  if (!supabase) {
+    return getSupabaseUnavailableResponse()
+  }
+
   try {
     const payload = tasks.map((task, index) => ({
       project_id: projectId,
@@ -44,6 +59,10 @@ export async function saveTasks(projectId, userId, tasks) {
 }
 
 export async function getUserProjects(userId) {
+  if (!supabase) {
+    return getSupabaseUnavailableResponse()
+  }
+
   try {
     const { data, error } = await supabase
       .from('projects')
@@ -58,6 +77,10 @@ export async function getUserProjects(userId) {
 }
 
 export async function getProjectTasks(projectId) {
+  if (!supabase) {
+    return getSupabaseUnavailableResponse()
+  }
+
   try {
     const { data, error } = await supabase
       .from('tasks')
@@ -72,6 +95,10 @@ export async function getProjectTasks(projectId) {
 }
 
 export async function markTaskComplete(taskId) {
+  if (!supabase) {
+    return getSupabaseUnavailableResponse()
+  }
+
   try {
     const { data, error } = await supabase
       .from('tasks')
@@ -87,6 +114,10 @@ export async function markTaskComplete(taskId) {
 }
 
 export async function markProjectComplete(projectId) {
+  if (!supabase) {
+    return getSupabaseUnavailableResponse()
+  }
+
   try {
     const { data, error } = await supabase
       .from('projects')

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { buttonPrimary, buttonSecondary, sizeLg } from '../lib/buttonStyles'
 
 function FeedbackPanel({
   feedbackHistory,
@@ -27,7 +28,7 @@ function FeedbackPanel({
 
       <button
         type="button"
-        className="border p-2"
+        className={`${buttonPrimary} ${sizeLg}`}
         onClick={onCheckCode}
         disabled={isCheckingCode}
       >
@@ -57,7 +58,11 @@ function FeedbackPanel({
             placeholder="What should I fix next?"
           />
         </label>
-        <button type="submit" className="border p-2" disabled={isAskingFollowUp}>
+        <button
+          type="submit"
+          className={`${buttonSecondary} ${sizeLg}`}
+          disabled={isAskingFollowUp}
+        >
           {isAskingFollowUp ? 'Sending...' : 'Send question'}
         </button>
       </form>
