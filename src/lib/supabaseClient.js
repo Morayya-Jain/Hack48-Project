@@ -21,9 +21,13 @@ CREATE TABLE tasks (
   description text NOT NULL,
   hint text NOT NULL,
   example_output text NOT NULL,
+  language text,
   completed boolean DEFAULT false,
   created_at timestamp with time zone DEFAULT now()
 );
+
+-- If you already created tasks table before language support:
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS language text;
 
 -- RLS Policies (run these too):
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;

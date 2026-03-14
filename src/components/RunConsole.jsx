@@ -1,33 +1,18 @@
-import { useCallback, useMemo, useState } from 'react'
-import { buttonPrimary, buttonSecondary, sizeSm } from '../lib/buttonStyles'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { buttonDanger, buttonPrimary, buttonSecondary, sizeSm } from '../lib/buttonStyles'
+import {
+  LANGUAGE_CHOICES,
+  canRunInConsole,
+  isPreviewLanguage,
+  normalizeRunnableCode,
+  prettyLanguageName,
+  resolveRuntimeLanguage,
+  sanitizeLanguage,
+} from '../lib/runtimeUtils'
+
+const PYODIDE_BASE_URL = import.meta.env.VITE_PYODIDE_BASE_URL?.trim() || ''
 
 let sqlRuntimePromise = null
-
-const languageLabels = {
-  auto: 'Auto',
-  javascript: 'JavaScript',
-  typescript: 'TypeScript',
-  python: 'Python',
-  sql: 'SQL',
-  html: 'HTML/CSS',
-  java: 'Java',
-  csharp: 'C#',
-  go: 'Go',
-  rust: 'Rust',
-  ruby: 'Ruby',
-  php: 'PHP',
-  swift: 'Swift',
-  kotlin: 'Kotlin',
-}
-
-const languageChoices = [
-  { value: 'auto', label: 'Auto (Detected)' },
-  { value: 'javascript', label: 'JavaScript' },
-  { value: 'typescript', label: 'TypeScript' },
-  { value: 'python', label: 'Python' },
-  { value: 'sql', label: 'SQL' },
-  { value: 'html', label: 'HTML/CSS Preview' },
-]
 
 function toText(value) {
   if (typeof value === 'string') {
@@ -49,10 +34,6 @@ function toText(value) {
   }
 }
 
-function prettyLanguageName(language) {
-  return languageLabels[language] || `Unknown (${language || 'n/a'})`
-}
-
 function createJavascriptWorkerScript() {
   return `
 const formatValue = (value) => {
@@ -68,13 +49,17 @@ const formatValue = (value) => {
 }
 
 self.onmessage = async (event) => {
-  const { code } = event.data
-  const emit = (type, text) => self.postMessage({ type, text })
+  const { command, code, runId } = event.data || {}
+  if (command !== 'run') {
+    return
+  }
+
+  const emit = (type, text) => self.postMessage({ runId, type, text })
   const proxyConsole = {
     log: (...args) => emit('log', args.map(formatValue).join(' ')),
     info: (...args) => emit('info', args.map(formatValue).join(' ')),
     warn: (...args) => emit('warn', args.map(formatValue).join(' ')),
-    error: (...args) => emit('error', args.map(formatValue).join(' ')),
+    error: (...args) => emit('stderr', args.map(formatValue).join(' ')),
   }
 
   const originalConsole = self.console
@@ -82,7 +67,7 @@ self.onmessage = async (event) => {
 
   try {
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-    const runUserCode = new AsyncFunction(code)
+    const runUserCode = new AsyncFunction(code || '')
     const result = await runUserCode()
 
     if (typeof result !== 'undefined') {
@@ -91,7 +76,7 @@ self.onmessage = async (event) => {
 
     emit('done', 'Execution finished.')
   } catch (error) {
-    emit('error', error?.stack || error?.message || String(error))
+    emit('runtime_error', error?.stack || error?.message || String(error))
   } finally {
     self.console = originalConsole
   }
@@ -99,9 +84,10 @@ self.onmessage = async (event) => {
 `
 }
 
-function createPythonWorkerScript() {
+function createPythonWorkerScript(preferredBaseUrl) {
   return `
 let pyodideReadyPromise = null
+const preferredBaseUrl = ${JSON.stringify(preferredBaseUrl || '')}
 
 const formatValue = (value) => {
   if (typeof value === 'string') return value
@@ -115,23 +101,60 @@ const formatValue = (value) => {
   }
 }
 
-const emit = (type, text) => self.postMessage({ type, text })
+const emit = (runId, type, text) => self.postMessage({ runId, type, text })
 
-async function getPyodideInstance() {
+function normalizeBase(url) {
+  if (!url) {
+    return ''
+  }
+
+  return url.endsWith('/') ? url : url + '/'
+}
+
+async function getPyodideInstance(runId) {
   if (!pyodideReadyPromise) {
     pyodideReadyPromise = (async () => {
-      importScripts('https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js')
-      const pyodide = await loadPyodide()
+      const candidates = [
+        normalizeBase(preferredBaseUrl),
+        normalizeBase(self.location.origin + '/pyodide/'),
+        'https://cdn.jsdelivr.net/pyodide/v0.27.7/full/',
+        'https://unpkg.com/pyodide@0.27.7/',
+      ].filter(Boolean)
 
-      pyodide.setStdout({
-        batched: (text) => emit('log', text),
+      const uniqueCandidates = []
+      candidates.forEach((candidate) => {
+        if (!uniqueCandidates.includes(candidate)) {
+          uniqueCandidates.push(candidate)
+        }
       })
 
-      pyodide.setStderr({
-        batched: (text) => emit('error', text),
-      })
+      let lastError = null
 
-      return pyodide
+      for (const base of uniqueCandidates) {
+        try {
+          emit(runId, 'info', 'Preparing Python runtime...')
+          importScripts(base + 'pyodide.js')
+          const pyodide = await loadPyodide({ indexURL: base })
+
+          pyodide.setStdout({
+            batched: (text) => emit(runId, 'log', text),
+          })
+
+          pyodide.setStderr({
+            batched: (text) => emit(runId, 'stderr', text),
+          })
+
+          emit(runId, 'info', 'Python runtime ready.')
+          return pyodide
+        } catch (error) {
+          lastError = error
+        }
+      }
+
+      throw new Error(
+        lastError?.message ||
+          'Could not load Python runtime from local or CDN sources.',
+      )
     })()
   }
 
@@ -139,56 +162,29 @@ async function getPyodideInstance() {
 }
 
 self.onmessage = async (event) => {
-  const { code } = event.data
+  const { command, code, runId } = event.data || {}
+  if (command !== 'run') {
+    return
+  }
 
   try {
-    emit('info', 'Preparing Python runtime...')
-    const pyodide = await getPyodideInstance()
-    emit('info', 'Python runtime ready.')
-
+    const pyodide = await getPyodideInstance(runId)
     const result = await pyodide.runPythonAsync(code || '')
 
     if (typeof result !== 'undefined' && result !== null) {
-      emit('result', formatValue(result.toString ? result.toString() : result))
+      emit(
+        runId,
+        'result',
+        formatValue(result.toString ? result.toString() : result),
+      )
     }
 
-    emit('done', 'Execution finished.')
+    emit(runId, 'done', 'Execution finished.')
   } catch (error) {
-    emit('error', error?.message || String(error))
+    emit(runId, 'runtime_error', error?.message || String(error))
   }
 }
 `
-}
-
-function normalizeRunnableCode(code, language) {
-  const raw = code || ''
-  const trimmed = raw.trim()
-
-  if (!trimmed) {
-    return {
-      ok: false,
-      message: 'No code to run yet. Add some code first.',
-    }
-  }
-
-  if (trimmed === '// Start coding here') {
-    return {
-      ok: false,
-      message: 'Starter text is not runnable code. Replace it with your solution first.',
-    }
-  }
-
-  if (language === 'python' && trimmed.startsWith('//')) {
-    return {
-      ok: false,
-      message: 'This looks like JavaScript comment syntax. Use Python syntax before running.',
-    }
-  }
-
-  return {
-    ok: true,
-    code: raw,
-  }
 }
 
 function extractTypeScriptDiagnostics(tsApi, diagnostics = []) {
@@ -250,19 +246,31 @@ function formatSqlResultSet(resultSet) {
   return lines.join('\n')
 }
 
-function RunConsole({ code, language }) {
+function RunConsole({ code, detectedLanguage, lockedLanguage = '' }) {
   const [selectedLanguage, setSelectedLanguage] = useState('auto')
   const [outputLines, setOutputLines] = useState([])
   const [isRunning, setIsRunning] = useState(false)
   const [isPreparingRuntime, setIsPreparingRuntime] = useState(false)
 
-  const resolvedLanguage = selectedLanguage === 'auto' ? language : selectedLanguage
+  const isMountedRef = useRef(true)
+  const workersRef = useRef({ javascript: null, python: null })
+  const pendingWorkerRunRef = useRef(null)
+  const sqlCancelTokenRef = useRef(null)
+  const runCounterRef = useRef(0)
+
+  const normalizedLockedLanguage = sanitizeLanguage(lockedLanguage)
+  const resolvedLanguage = resolveRuntimeLanguage({
+    detectedLanguage,
+    selectedLanguage,
+    lockedLanguage: normalizedLockedLanguage,
+  })
+
   const isJavascript = resolvedLanguage === 'javascript'
   const isTypescript = resolvedLanguage === 'typescript'
   const isPython = resolvedLanguage === 'python'
   const isSql = resolvedLanguage === 'sql'
-  const isHtml = resolvedLanguage === 'html'
-  const canRunInConsole = isJavascript || isTypescript || isPython || isSql
+  const isHtml = isPreviewLanguage(resolvedLanguage)
+  const isConsoleRunnable = canRunInConsole(resolvedLanguage)
 
   const previewSrcDoc = useMemo(() => {
     if (!isHtml) {
@@ -286,87 +294,167 @@ function RunConsole({ code, language }) {
     setOutputLines([])
   }, [])
 
+  const terminateWorker = useCallback((kind) => {
+    const worker = workersRef.current[kind]
+    if (!worker) {
+      return
+    }
+
+    worker.terminate()
+    workersRef.current[kind] = null
+  }, [])
+
+  const finishWorkerRun = useCallback((kind, runId) => {
+    const pending = pendingWorkerRunRef.current
+
+    if (!pending || pending.kind !== kind || pending.runId !== runId) {
+      return
+    }
+
+    clearTimeout(pending.timeoutId)
+    pendingWorkerRunRef.current = null
+
+    if (!isMountedRef.current) {
+      return
+    }
+
+    setIsRunning(false)
+    setIsPreparingRuntime(false)
+  }, [])
+
+  const createWorker = useCallback(
+    (kind) => {
+      const script =
+        kind === 'python'
+          ? createPythonWorkerScript(PYODIDE_BASE_URL)
+          : createJavascriptWorkerScript()
+
+      const workerBlob = new Blob([script], {
+        type: 'application/javascript',
+      })
+
+      const workerUrl = URL.createObjectURL(workerBlob)
+      const worker = new Worker(workerUrl)
+      URL.revokeObjectURL(workerUrl)
+
+      worker.onmessage = (event) => {
+        const { runId, type, text } = event.data || {}
+        const pending = pendingWorkerRunRef.current
+
+        if (!pending || pending.kind !== kind || pending.runId !== runId) {
+          return
+        }
+
+        const normalizedText = toText(text)
+        appendLine(type || 'log', normalizedText)
+
+        const lowerText = normalizedText.toLowerCase()
+        if (type === 'info' && lowerText.includes('preparing')) {
+          setIsPreparingRuntime(true)
+        }
+
+        if (type === 'info' && lowerText.includes('ready')) {
+          setIsPreparingRuntime(false)
+        }
+
+        if (type === 'done' || type === 'runtime_error') {
+          finishWorkerRun(kind, runId)
+        }
+      }
+
+      worker.onerror = (event) => {
+        const pending = pendingWorkerRunRef.current
+
+        if (!pending || pending.kind !== kind) {
+          return
+        }
+
+        appendLine('runtime_error', event.message || 'Worker runtime error.')
+        terminateWorker(kind)
+        finishWorkerRun(kind, pending.runId)
+      }
+
+      workersRef.current[kind] = worker
+      return worker
+    },
+    [appendLine, finishWorkerRun, terminateWorker],
+  )
+
+  const getWorker = useCallback(
+    (kind) => {
+      const existing = workersRef.current[kind]
+      if (existing) {
+        return existing
+      }
+
+      return createWorker(kind)
+    },
+    [createWorker],
+  )
+
   const runInWorker = useCallback(
-    async ({ workerScript, sourceCode, timeoutMs }) => {
-      setIsRunning(true)
-      setIsPreparingRuntime(false)
-      setOutputLines([])
+    async ({ kind, sourceCode, timeoutMs }) => {
+      if (pendingWorkerRunRef.current) {
+        return
+      }
 
       try {
-        const workerBlob = new Blob([workerScript], {
-          type: 'application/javascript',
-        })
-        const workerUrl = URL.createObjectURL(workerBlob)
-        const worker = new Worker(workerUrl)
+        setIsRunning(true)
+        setIsPreparingRuntime(kind === 'python')
+        setOutputLines([])
 
-        let didFinish = false
+        const worker = getWorker(kind)
+        const runId = runCounterRef.current + 1
+        runCounterRef.current = runId
+
         const timeoutId = window.setTimeout(() => {
-          if (didFinish) {
+          const pending = pendingWorkerRunRef.current
+
+          if (!pending || pending.kind !== kind || pending.runId !== runId) {
             return
           }
 
-          didFinish = true
-          worker.terminate()
-          URL.revokeObjectURL(workerUrl)
-          appendLine('error', `Execution timed out after ${timeoutMs / 1000} seconds.`)
-          setIsRunning(false)
-          setIsPreparingRuntime(false)
+          appendLine(
+            'runtime_error',
+            `Execution timed out after ${timeoutMs / 1000} seconds.`,
+          )
+          terminateWorker(kind)
+          finishWorkerRun(kind, runId)
         }, timeoutMs)
 
-        worker.onmessage = (event) => {
-          const { type, text } = event.data ?? {}
-          const normalizedText = toText(text)
-          appendLine(type || 'log', normalizedText)
-
-          const lowerText = normalizedText.toLowerCase()
-          if (type === 'info' && lowerText.includes('preparing')) {
-            setIsPreparingRuntime(true)
-          }
-
-          if (type === 'info' && lowerText.includes('ready')) {
-            setIsPreparingRuntime(false)
-          }
-
-          if (type === 'done' || type === 'error') {
-            if (didFinish) {
-              return
-            }
-
-            didFinish = true
-            clearTimeout(timeoutId)
-            worker.terminate()
-            URL.revokeObjectURL(workerUrl)
-            setIsRunning(false)
-            setIsPreparingRuntime(false)
-          }
+        pendingWorkerRunRef.current = {
+          kind,
+          runId,
+          timeoutId,
         }
 
-        worker.onerror = (event) => {
-          if (didFinish) {
-            return
-          }
-
-          didFinish = true
-          clearTimeout(timeoutId)
-          appendLine('error', event.message || 'Runtime error')
-          worker.terminate()
-          URL.revokeObjectURL(workerUrl)
-          setIsRunning(false)
-          setIsPreparingRuntime(false)
-        }
-
-        worker.postMessage({ code: sourceCode || '' })
+        worker.postMessage({
+          command: 'run',
+          runId,
+          code: sourceCode || '',
+        })
       } catch (error) {
-        appendLine('error', error.message || 'Could not run code.')
+        appendLine('runtime_error', error.message || 'Could not start runtime worker.')
         setIsRunning(false)
         setIsPreparingRuntime(false)
       }
     },
-    [appendLine],
+    [appendLine, finishWorkerRun, getWorker, terminateWorker],
   )
 
   const runSqlCode = useCallback(
     async (sourceCode) => {
+      if (sqlCancelTokenRef.current && !sqlCancelTokenRef.current.cancelled) {
+        return
+      }
+
+      const token = {
+        id: runCounterRef.current + 1,
+        cancelled: false,
+      }
+      runCounterRef.current = token.id
+      sqlCancelTokenRef.current = token
+
       setIsRunning(true)
       setIsPreparingRuntime(true)
       setOutputLines([])
@@ -376,6 +464,12 @@ function RunConsole({ code, language }) {
       try {
         appendLine('info', 'Preparing SQL runtime...')
         const SQL = await getSqlRuntime()
+
+        if (token.cancelled) {
+          appendLine('warn', 'SQL execution stopped.')
+          return
+        }
+
         setIsPreparingRuntime(false)
         appendLine('info', 'SQL runtime ready.')
 
@@ -390,14 +484,21 @@ function RunConsole({ code, language }) {
           return
         }
 
-        statements.forEach((statement, index) => {
+        for (let index = 0; index < statements.length; index += 1) {
+          if (token.cancelled) {
+            appendLine('warn', 'SQL execution stopped.')
+            break
+          }
+
+          const statement = statements[index]
+
           try {
             const sql = `${statement};`
             const resultSets = db.exec(sql)
 
             if (resultSets.length === 0) {
               appendLine('info', `Statement ${index + 1} executed successfully.`)
-              return
+              continue
             }
 
             resultSets.forEach((resultSet, resultIndex) => {
@@ -408,88 +509,128 @@ function RunConsole({ code, language }) {
             })
           } catch (error) {
             appendLine(
-              'error',
+              'runtime_error',
               `Statement ${index + 1} failed: ${error.message || 'Unknown SQL error.'}`,
             )
           }
-        })
+        }
       } catch (error) {
-        appendLine('error', error.message || 'Could not run SQL code.')
+        appendLine('runtime_error', error.message || 'Could not run SQL code.')
       } finally {
         if (db) {
           db.close()
         }
 
-        setIsRunning(false)
-        setIsPreparingRuntime(false)
+        if (sqlCancelTokenRef.current?.id === token.id) {
+          sqlCancelTokenRef.current = null
+        }
+
+        if (isMountedRef.current) {
+          setIsRunning(false)
+          setIsPreparingRuntime(false)
+        }
       }
     },
     [appendLine],
   )
 
+  const handleStopExecution = useCallback(() => {
+    let didStop = false
+
+    const pending = pendingWorkerRunRef.current
+    if (pending) {
+      clearTimeout(pending.timeoutId)
+      pendingWorkerRunRef.current = null
+      terminateWorker(pending.kind)
+      didStop = true
+    }
+
+    if (sqlCancelTokenRef.current && !sqlCancelTokenRef.current.cancelled) {
+      sqlCancelTokenRef.current.cancelled = true
+      didStop = true
+    }
+
+    if (didStop) {
+      appendLine('warn', 'Execution stopped by user.')
+      setIsRunning(false)
+      setIsPreparingRuntime(false)
+    }
+  }, [appendLine, terminateWorker])
+
   const handleRunCode = useCallback(async () => {
-    const normalized = normalizeRunnableCode(code, resolvedLanguage)
+    try {
+      const normalized = normalizeRunnableCode(code, resolvedLanguage)
 
-    if (!normalized.ok) {
-      setOutputLines([
-        {
-          type: 'warn',
-          message: normalized.message,
-        },
-      ])
-      return
-    }
-
-    if (isJavascript) {
-      await runInWorker({
-        workerScript: createJavascriptWorkerScript(),
-        sourceCode: normalized.code,
-        timeoutMs: 5000,
-      })
-      return
-    }
-
-    if (isTypescript) {
-      const tsModule = await import('typescript')
-      const tsApi = tsModule.default || tsModule
-
-      const transpileResult = tsApi.transpileModule(normalized.code, {
-        reportDiagnostics: true,
-        compilerOptions: {
-          module: tsApi.ModuleKind.ESNext,
-          target: tsApi.ScriptTarget.ES2020,
-        },
-      })
-
-      const diagnostics = extractTypeScriptDiagnostics(
-        tsApi,
-        transpileResult.diagnostics,
-      )
-
-      if (diagnostics.length > 0) {
-        setOutputLines(diagnostics.map((message) => ({ type: 'error', message })))
+      if (!normalized.ok) {
+        setOutputLines([
+          {
+            type: 'warn',
+            message: normalized.message,
+          },
+        ])
         return
       }
 
-      await runInWorker({
-        workerScript: createJavascriptWorkerScript(),
-        sourceCode: transpileResult.outputText,
-        timeoutMs: 5000,
-      })
-      return
-    }
+      if (isJavascript) {
+        await runInWorker({
+          kind: 'javascript',
+          sourceCode: normalized.code,
+          timeoutMs: 5000,
+        })
+        return
+      }
 
-    if (isPython) {
-      await runInWorker({
-        workerScript: createPythonWorkerScript(),
-        sourceCode: normalized.code,
-        timeoutMs: 20000,
-      })
-      return
-    }
+      if (isTypescript) {
+        const tsModule = await import('typescript')
+        const tsApi = tsModule.default || tsModule
 
-    if (isSql) {
-      await runSqlCode(normalized.code)
+        const transpileResult = tsApi.transpileModule(normalized.code, {
+          reportDiagnostics: true,
+          compilerOptions: {
+            module: tsApi.ModuleKind.ESNext,
+            target: tsApi.ScriptTarget.ES2020,
+          },
+        })
+
+        const diagnostics = extractTypeScriptDiagnostics(
+          tsApi,
+          transpileResult.diagnostics,
+        )
+
+        if (diagnostics.length > 0) {
+          setOutputLines(diagnostics.map((message) => ({ type: 'runtime_error', message })))
+          return
+        }
+
+        await runInWorker({
+          kind: 'javascript',
+          sourceCode: transpileResult.outputText,
+          timeoutMs: 5000,
+        })
+        return
+      }
+
+      if (isPython) {
+        await runInWorker({
+          kind: 'python',
+          sourceCode: normalized.code,
+          timeoutMs: 20000,
+        })
+        return
+      }
+
+      if (isSql) {
+        await runSqlCode(normalized.code)
+      }
+    } catch (error) {
+      setOutputLines([
+        {
+          type: 'runtime_error',
+          message: error.message || 'Could not run code.',
+        },
+      ])
+      setIsRunning(false)
+      setIsPreparingRuntime(false)
     }
   }, [
     code,
@@ -501,6 +642,28 @@ function RunConsole({ code, language }) {
     runInWorker,
     runSqlCode,
   ])
+
+  useEffect(() => {
+    isMountedRef.current = true
+
+    return () => {
+      isMountedRef.current = false
+
+      const pending = pendingWorkerRunRef.current
+      if (pending) {
+        clearTimeout(pending.timeoutId)
+      }
+
+      pendingWorkerRunRef.current = null
+
+      if (sqlCancelTokenRef.current) {
+        sqlCancelTokenRef.current.cancelled = true
+      }
+
+      terminateWorker('javascript')
+      terminateWorker('python')
+    }
+  }, [terminateWorker])
 
   const runButtonText = useMemo(() => {
     if (!isRunning) {
@@ -564,9 +727,9 @@ function RunConsole({ code, language }) {
             className="border p-1.5 text-sm"
             value={selectedLanguage}
             onChange={(event) => setSelectedLanguage(event.target.value)}
-            disabled={isRunning}
+            disabled={isRunning || Boolean(normalizedLockedLanguage)}
           >
-            {languageChoices.map((choice) => (
+            {LANGUAGE_CHOICES.map((choice) => (
               <option key={choice.value} value={choice.value}>
                 {choice.label}
               </option>
@@ -576,11 +739,17 @@ function RunConsole({ code, language }) {
       </div>
 
       <p className="text-sm text-slate-700">
-        Detected: {prettyLanguageName(language)}. Active: {prettyLanguageName(resolvedLanguage)}.
+        Detected: {prettyLanguageName(detectedLanguage)}. Active: {prettyLanguageName(resolvedLanguage)}.
       </p>
 
+      {normalizedLockedLanguage ? (
+        <p className="text-sm text-slate-700">
+          This task is language-locked to {prettyLanguageName(normalizedLockedLanguage)}.
+        </p>
+      ) : null}
+
       <div className="flex gap-2">
-        {canRunInConsole ? (
+        {isConsoleRunnable ? (
           <button
             type="button"
             className={`${buttonPrimary} ${sizeSm}`}
@@ -588,6 +757,16 @@ function RunConsole({ code, language }) {
             disabled={isRunning}
           >
             {runButtonText}
+          </button>
+        ) : null}
+
+        {isRunning ? (
+          <button
+            type="button"
+            className={`${buttonDanger} ${sizeSm}`}
+            onClick={handleStopExecution}
+          >
+            Stop
           </button>
         ) : null}
 
@@ -603,7 +782,7 @@ function RunConsole({ code, language }) {
 
       <p className="text-sm text-slate-700">{helperText}</p>
 
-      {canRunInConsole ? (
+      {isConsoleRunnable ? (
         <div className="border bg-slate-950 text-slate-100 p-2 min-h-32 max-h-60 overflow-auto text-sm font-mono whitespace-pre-wrap">
           {outputLines.length === 0 ? (
             <p className="text-slate-300">Run your code to see output.</p>
@@ -612,7 +791,7 @@ function RunConsole({ code, language }) {
               <p
                 key={`${line.type}-${index}`}
                 className={
-                  line.type === 'error'
+                  line.type === 'runtime_error' || line.type === 'stderr'
                     ? 'text-red-300'
                     : line.type === 'warn'
                       ? 'text-amber-300'

@@ -25,6 +25,10 @@ Set values:
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
+Optional for Python runtime fallback:
+
+- `VITE_PYODIDE_BASE_URL` (example: `/pyodide/` if self-hosting Pyodide assets)
+
 ## Supabase Setup
 
 Run the SQL block found at the top of:

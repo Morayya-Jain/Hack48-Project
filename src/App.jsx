@@ -27,6 +27,7 @@ import {
   saveTasks,
 } from './lib/db'
 import { detectLanguage } from './lib/detectLanguage'
+import { sanitizeLanguage } from './lib/runtimeUtils'
 
 function toText(value) {
   if (typeof value === 'string') {
@@ -55,6 +56,7 @@ function normalizeTask(task) {
     description: toText(task.description),
     hint: toText(task.hint),
     exampleOutput: toText(task.example_output ?? task.exampleOutput ?? ''),
+    language: sanitizeLanguage(task.language),
     completed: Boolean(task.completed),
     task_index: typeof task.task_index === 'number' ? task.task_index : 0,
   }
@@ -342,10 +344,12 @@ function App() {
   )
 
   const currentTask = tasks[currentTaskIndex] ?? null
+  const lockedTaskLanguage = sanitizeLanguage(currentTask?.language)
   const detectedLanguage = useMemo(
     () => detectLanguage(projectDescription, userCode),
     [projectDescription, userCode],
   )
+  const runtimeLanguage = lockedTaskLanguage || detectedLanguage
 
   const completedCount = useMemo(
     () => tasks.filter((task) => task.completed).length,
@@ -648,11 +652,13 @@ function App() {
             value={userCode}
             onChange={updateUserCode}
             readOnly={Boolean(currentTask?.completed) && firstIncompleteIndex !== -1}
+            language={runtimeLanguage}
           />
           <RunConsole
             key={currentTask?.id || 'run-console'}
             code={userCode}
-            language={detectedLanguage}
+            detectedLanguage={detectedLanguage}
+            lockedLanguage={lockedTaskLanguage}
           />
         </div>
 

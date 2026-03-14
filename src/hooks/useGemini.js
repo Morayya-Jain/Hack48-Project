@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { sanitizeLanguage } from '../lib/runtimeUtils'
 
 const GEMINI_URL =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
@@ -107,7 +108,7 @@ async function callGemini(prompt, options = {}) {
 
 export function useGemini() {
   const generateRoadmap = useCallback(async (projectDescription, skillLevel) => {
-    const basePrompt = `You are a coding mentor. The user wants to build: ${projectDescription}.\nTheir skill level is: ${skillLevel}.\nGenerate a learning roadmap as a JSON array of exactly 6 tasks.\nEach task guides the user to implement one specific piece of the project themselves.\nNever give code directly in the description or hint fields.\nReturn ONLY a valid raw JSON array. No markdown, no backticks, no explanation.\nSchema: [{id, title, description, hint, exampleOutput}]\nThe exampleOutput field may contain code as it is shown only when explicitly requested.`
+    const basePrompt = `You are a coding mentor. The user wants to build: ${projectDescription}.\nTheir skill level is: ${skillLevel}.\nGenerate a learning roadmap as a JSON array of exactly 6 tasks.\nEach task guides the user to implement one specific piece of the project themselves.\nNever give code directly in the description or hint fields.\nReturn ONLY a valid raw JSON array. No markdown, no backticks, no explanation.\nSchema: [{id, title, description, hint, exampleOutput, language}]\nThe language field must be one of: javascript, typescript, python, html, sql, java, csharp, go, rust, ruby, php, swift, kotlin.\nUse language only as a task-level lock when clearly appropriate.\nThe exampleOutput field may contain code as it is shown only when explicitly requested.`
 
     const firstAttempt = await callGemini(basePrompt, {
       temperature: 0.7,
@@ -129,15 +130,24 @@ export function useGemini() {
         throw new Error('Roadmap must contain exactly 6 tasks.')
       }
 
-      return parsed.map((task, index) => ({
-        id: task.id || `ai-task-${index + 1}`,
-        title: toText(task.title) || `Task ${index + 1}`,
-        description: toText(task.description),
-        hint: toText(task.hint),
-        exampleOutput: toText(task.exampleOutput),
-        completed: false,
-        task_index: index,
-      }))
+      return parsed.map((task, index) => {
+        const title = toText(task.title) || `Task ${index + 1}`
+        const description = toText(task.description)
+        const hint = toText(task.hint)
+        const exampleOutput = toText(task.exampleOutput)
+        const lockedLanguage = sanitizeLanguage(task.language)
+
+        return {
+          id: task.id || `ai-task-${index + 1}`,
+          title,
+          description,
+          hint,
+          exampleOutput,
+          language: lockedLanguage,
+          completed: false,
+          task_index: index,
+        }
+      })
     }
 
     try {

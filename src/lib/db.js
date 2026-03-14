@@ -43,6 +43,7 @@ export async function saveTasks(projectId, userId, tasks) {
       description: task.description,
       hint: task.hint,
       example_output: task.exampleOutput,
+      language: task.language || null,
       completed: false,
     }))
 
@@ -51,6 +52,36 @@ export async function saveTasks(projectId, userId, tasks) {
       .insert(payload)
       .select()
       .order('task_index', { ascending: true })
+
+    if (
+      error &&
+      /column .*language|schema cache|Could not find the 'language' column/i.test(
+        error.message || '',
+      )
+    ) {
+      const legacyPayload = payload.map((task) => {
+        const nextTask = { ...task }
+        delete nextTask.language
+        return nextTask
+      })
+
+      const { data: legacyData, error: legacyError } = await supabase
+        .from('tasks')
+        .insert(legacyPayload)
+        .select()
+        .order('task_index', { ascending: true })
+
+      if (legacyError) {
+        return { data: null, error: legacyError }
+      }
+
+      const mergedData = (legacyData ?? []).map((row, index) => ({
+        ...row,
+        language: tasks[index]?.language || '',
+      }))
+
+      return { data: mergedData, error: null }
+    }
 
     return { data, error }
   } catch (error) {
