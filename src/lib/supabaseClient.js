@@ -41,6 +41,17 @@ CREATE TABLE project_files (
   UNIQUE(project_id, path)
 );
 
+-- Table 4: profiles
+CREATE TABLE profiles (
+  user_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  expertise_level text,
+  skills jsonb NOT NULL DEFAULT '[]'::jsonb,
+  interests jsonb NOT NULL DEFAULT '[]'::jsonb,
+  completed_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now()
+);
+
 -- If you already created tasks table before language support:
 -- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS language text;
 
@@ -51,6 +62,7 @@ CREATE TABLE project_files (
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE project_files ENABLE ROW LEVEL SECURITY;
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can only access their own projects"
 ON projects FOR ALL USING (auth.uid() = user_id);
@@ -60,6 +72,9 @@ ON tasks FOR ALL USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can only access their own project files"
 ON project_files FOR ALL USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can only access their own profile"
+ON profiles FOR ALL USING (auth.uid() = user_id);
 */
 
 import { createClient } from '@supabase/supabase-js'

@@ -57,3 +57,11 @@ test('parseRichTextSegments passes plain text through unchanged', () => {
   assert.deepEqual(segments[0], { type: 'text', content: input })
 })
 
+test('parseRichTextSegments does not wrap prose with inline code mentions', () => {
+  const input =
+    "Try this tiny next step:\nFirst, focus on getting input from the user. Since the language is unspecified, I'll give a general example. Many languages use a function like input() or Scanner to read user input from the console."
+  const segments = parseRichTextSegments(input)
+
+  assert.equal(segments.length, 1)
+  assert.deepEqual(segments[0], { type: 'text', content: input })
+})

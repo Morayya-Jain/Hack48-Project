@@ -7,6 +7,7 @@ import FeedbackPanel from './components/FeedbackPanel'
 import FileTree from './components/FileTree'
 import HintBox from './components/HintBox'
 import Onboarding from './components/Onboarding'
+import ProfileOnboarding from './components/ProfileOnboarding'
 import ProgressBar from './components/ProgressBar'
 import Roadmap from './components/Roadmap'
 import RunConsole from './components/RunConsole'
@@ -23,6 +24,7 @@ import {
   createProject,
   createProjectFiles,
   deleteProjectFile,
+  getUserProfile,
   markProjectIncomplete,
   getProjectFiles,
   getProjectTasks,
@@ -32,17 +34,21 @@ import {
   markTaskIncomplete as markTaskIncompleteInDb,
   replaceProjectFiles,
   saveTasks,
+  upsertUserProfile,
   upsertProjectFile,
 } from './lib/db'
 import { detectLanguage } from './lib/detectLanguage'
 import {
-  buildExportPackage,
+  isProfileComplete,
+  normalizeProfile,
+  profileToPromptContext,
+} from './lib/profile'
+import {
   buildPreviewSrcDoc,
   createDefaultProjectFiles,
   editorLanguageFromFile,
   fileNameFromPath,
   normalizeProjectFiles,
-  parseImportPackage,
   runtimeLanguageFromPath,
   sanitizeFilePath,
   toPersistedFiles,
@@ -89,6 +95,13 @@ function isProjectFilesTableMissing(error) {
   )
 }
 
+function isProfilesTableMissing(error) {
+  const message = error?.message || ''
+  return /profiles|schema cache|relation .*profiles|Could not find the 'profiles'|does not exist/i.test(
+    message,
+  )
+}
+
 function App() {
   const {
     user,
@@ -106,6 +119,7 @@ function App() {
 
   const {
     user: appUser,
+    profile,
     currentProjectId,
     projectDescription,
     skillLevel,
@@ -121,12 +135,15 @@ function App() {
     isCheckingCode,
     isAskingFollowUp,
     isLoadingProjects,
+    isLoadingProfile,
+    isSavingProfile,
     isAuthenticating: isAuthenticatingState,
     isSavingFiles,
     fileError,
     isImporting,
     isExporting,
     setUser,
+    setProfile,
     setCurrentProjectId,
     setProjectDescription,
     setSkillLevel,
@@ -145,6 +162,8 @@ function App() {
     setIsCheckingCode,
     setIsAskingFollowUp,
     setIsLoadingProjects,
+    setIsLoadingProfile,
+    setIsSavingProfile,
     setIsAuthenticating,
     setIsSavingFiles,
     setFileError,
@@ -160,6 +179,7 @@ function App() {
   const [previewError, setPreviewError] = useState('')
   const [isCheckingBeforeComplete, setIsCheckingBeforeComplete] = useState(false)
   const [isMarkingTaskComplete, setIsMarkingTaskComplete] = useState(false)
+  const [isEditingProfile, setIsEditingProfile] = useState(false)
   const lastCheckSignatureRef = useRef('')
   const lastCheckResultRef = useRef(null)
   const saveTimeoutRef = useRef(null)
@@ -175,7 +195,7 @@ function App() {
   }, [isAuthenticating, setIsAuthenticating])
 
   const loadProjects = useCallback(
-    async (userId, autoRoute = false) => {
+    async (userId) => {
       setIsLoadingProjects(true)
 
       const { data, error } = await getUserProjects(userId)
@@ -184,31 +204,96 @@ function App() {
         console.error(error)
         setUiError(error.message || 'Could not load projects.')
         setIsLoadingProjects(false)
-        return
+        return { data: [], error }
       }
 
       const safeProjects = data ?? []
       setProjects(safeProjects)
-
-      if (autoRoute) {
-        setScreen(safeProjects.length === 0 ? 'onboarding' : 'dashboard')
-      }
-
       setIsLoadingProjects(false)
+      return { data: safeProjects, error: null }
     },
     [setIsLoadingProjects],
+  )
+
+  const loadProfile = useCallback(
+    async (userId) => {
+      setIsLoadingProfile(true)
+
+      try {
+        const { data, error } = await getUserProfile(userId)
+
+        if (error) {
+          console.error(error)
+          if (isProfilesTableMissing(error)) {
+            setUiError(
+              'Profiles table is not configured in Supabase yet. You can still continue and we will keep profile data for this session.',
+            )
+          } else {
+            setUiError(error.message || 'Could not load profile.')
+          }
+          setProfile(null)
+          return { data: null, error }
+        }
+
+        const nextProfile = data ? normalizeProfile(data) : null
+        setProfile(nextProfile)
+        return { data: nextProfile, error: null }
+      } catch (error) {
+        console.error(error)
+        setUiError(error.message || 'Could not load profile.')
+        setProfile(null)
+        return { data: null, error }
+      } finally {
+        setIsLoadingProfile(false)
+      }
+    },
+    [setIsLoadingProfile, setProfile],
+  )
+
+  const resolveLandingScreen = useCallback((nextProjects, nextProfile, profileError) => {
+    if (isProfilesTableMissing(profileError) || !profileError) {
+      if (!isProfileComplete(nextProfile)) {
+        return 'profile-onboarding'
+      }
+    }
+
+    return nextProjects.length === 0 ? 'onboarding' : 'dashboard'
+  }, [])
+
+  const initializeAuthenticatedUser = useCallback(
+    async (userId) => {
+      setUiError('')
+      const [projectsResult, profileResult] = await Promise.all([
+        loadProjects(userId),
+        loadProfile(userId),
+      ])
+
+      const nextProjects = projectsResult?.data ?? []
+      const nextProfile = profileResult?.data ?? null
+      const nextScreen = resolveLandingScreen(
+        nextProjects,
+        nextProfile,
+        profileResult?.error ?? null,
+      )
+
+      setIsEditingProfile(false)
+      setScreen(nextScreen)
+    },
+    [loadProfile, loadProjects, resolveLandingScreen],
   )
 
   useEffect(() => {
     if (!user) {
       setProjects([])
+      setProfile(null)
       setScreen('dashboard')
+      setIsEditingProfile(false)
       resetApp()
       return
     }
 
-    loadProjects(user.id, true)
-  }, [loadProjects, resetApp, user])
+    initializeAuthenticatedUser(user.id)
+  }, [initializeAuthenticatedUser, resetApp, setProfile, user])
 
   const syncWorkspaceFiles = useCallback(
     (files, preferredActiveFileId = null) => {
@@ -329,12 +414,14 @@ function App() {
 
     resetApp()
     setProjects([])
+    setProfile(null)
+    setIsEditingProfile(false)
     setScreen('dashboard')
     setUiError('')
     setPreviewSrcDoc('')
     setPreviewError('')
     setAuthError(null)
-  }, [resetApp, setAuthError, signOut])
+  }, [resetApp, setAuthError, setProfile, signOut])
 
   const handleResendConfirmation = useCallback(
     async (email) => {
@@ -354,8 +441,66 @@ function App() {
     setUiError('')
     setPreviewSrcDoc('')
     setPreviewError('')
+    setIsEditingProfile(false)
     setScreen('onboarding')
   }, [resetApp])
+
+  const handleEditProfile = useCallback(() => {
+    resetApp()
+    setUiError('')
+    setPreviewSrcDoc('')
+    setPreviewError('')
+    setIsEditingProfile(true)
+    setScreen('profile-onboarding')
+  }, [resetApp])
+
+  const handleCompleteProfile = useCallback(
+    async (profileInput) => {
+      if (!user) {
+        setUiError('You must be logged in to update your profile.')
+        return
+      }
+
+      const normalized = normalizeProfile(profileInput)
+      const profileWithCompletion = {
+        ...normalized,
+        completedAt: normalized.completedAt || new Date().toISOString(),
+      }
+
+      setIsSavingProfile(true)
+      setUiError('')
+
+      try {
+        const { data, error } = await upsertUserProfile(user.id, profileWithCompletion)
+
+        if (error) {
+          if (isProfilesTableMissing(error)) {
+            setUiError(
+              'Profiles table is not configured in Supabase yet. Profile preferences are saved for this session only.',
+            )
+            setProfile(profileWithCompletion)
+          } else {
+            console.error(error)
+            setUiError(error.message || 'Could not save profile.')
+            return
+          }
+        } else if (data) {
+          setProfile(data)
+        } else {
+          setProfile(profileWithCompletion)
+        }
+
+        setIsEditingProfile(false)
+        setScreen(isEditingProfile ? 'dashboard' : projects.length === 0 ? 'onboarding' : 'dashboard')
+      } catch (error) {
+        console.error(error)
+        setUiError(error.message || 'Could not save profile.')
+      } finally {
+        setIsSavingProfile(false)
+      }
+    },
+    [isEditingProfile, projects.length, setIsSavingProfile, setProfile, user],
+  )
 
   const handleGenerateRoadmap = useCallback(
     async (description, nextSkillLevel) => {
@@ -370,7 +515,11 @@ function App() {
       setSkillLevel(nextSkillLevel)
 
       try {
-        const roadmapResult = await generateRoadmap(description, nextSkillLevel)
+        const roadmapResult = await generateRoadmap(
+          description,
+          nextSkillLevel,
+          profileToPromptContext(profile),
+        )
         if (roadmapResult.error) {
           setUiError(roadmapResult.error.message)
           return
@@ -428,6 +577,7 @@ function App() {
       generateRoadmap,
       bootstrapProjectFiles,
       loadProjects,
+      profile,
       resetTaskSupportState,
       setCurrentProjectId,
       setCurrentTaskIndex,
@@ -777,20 +927,17 @@ function App() {
     setFileError('')
 
     try {
-      const payload = buildExportPackage({
-        projectId: currentProjectId,
-        projectDescription,
-        skillLevel,
-        tasks,
-        files: projectFiles,
+      const { default: JSZip } = await import('jszip')
+      const zip = new JSZip()
+
+      projectFiles.forEach((file) => {
+        zip.file(file.path, file.content || '')
       })
 
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {
-        type: 'application/json',
-      })
+      const blob = await zip.generateAsync({ type: 'blob' })
       const link = document.createElement('a')
       link.href = URL.createObjectURL(blob)
-      link.download = `mentor-project-${currentProjectId || 'export'}.json`
+      link.download = `mentor-project-${currentProjectId || 'export'}.zip`
       link.click()
       URL.revokeObjectURL(link.href)
     } catch (error) {
@@ -801,12 +948,9 @@ function App() {
     }
   }, [
     currentProjectId,
-    projectDescription,
     projectFiles,
     setFileError,
     setIsExporting,
-    skillLevel,
-    tasks,
   ])
 
   const handleImportClick = useCallback(() => {
@@ -826,14 +970,47 @@ function App() {
       setFileError('')
 
       try {
-        const raw = await file.text()
-        const parsed = parseImportPackage(raw)
-        if (parsed.error || !parsed.data) {
-          setFileError(parsed.error?.message || 'Invalid import file.')
+        const isZipFile =
+          file.name.toLowerCase().endsWith('.zip') ||
+          file.type === 'application/zip' ||
+          file.type === 'application/x-zip-compressed'
+
+        if (!isZipFile) {
+          setFileError('Please import a .zip file.')
           return
         }
 
-        const nextFiles = parsed.data.files
+        const { default: JSZip } = await import('jszip')
+        const zip = await JSZip.loadAsync(file)
+        const entries = Object.values(zip.files)
+          .filter(
+            (entry) =>
+              !entry.dir &&
+              !entry.name.startsWith('__MACOSX/') &&
+              !entry.name.endsWith('/'),
+          )
+          .sort((a, b) => a.name.localeCompare(b.name))
+
+        const importedFiles = []
+        for (let index = 0; index < entries.length; index += 1) {
+          const entry = entries[index]
+          const content = await entry.async('string')
+          importedFiles.push({
+            path: entry.name,
+            name: fileNameFromPath(entry.name),
+            language: runtimeLanguageFromPath(entry.name) || 'javascript',
+            content,
+            sort_index: index,
+          })
+        }
+
+        const nextFiles = importedFiles
+
+        if (!Array.isArray(nextFiles) || nextFiles.length === 0) {
+          setFileError('Import file has no project files.')
+          return
+        }
+
         const payload = toPersistedFiles(nextFiles, currentProjectId, appUser.id)
         const { data, error } = await replaceProjectFiles(currentProjectId, appUser.id, payload)
 
@@ -931,7 +1108,11 @@ function App() {
     setFeedbackHistory([])
 
     try {
-      const result = await checkUserCode(currentTask, userCode)
+      const result = await checkUserCode(
+        currentTask,
+        userCode,
+        profileToPromptContext(profile),
+      )
       if (result.error) {
         setUiError(result.error.message)
         return { data: null, error: result.error }
@@ -952,6 +1133,7 @@ function App() {
   }, [
     checkUserCode,
     currentTask,
+    profile,
     setFeedbackHistory,
     setIsCheckingCode,
     userCode,
@@ -987,6 +1169,7 @@ function App() {
           normalizedQuestion,
           updatedHistory,
           skillLevel,
+          profileToPromptContext(profile),
         )
 
         if (result.error) {
@@ -1006,6 +1189,7 @@ function App() {
       askFollowUp,
       currentTask,
       feedbackHistory,
+      profile,
       skillLevel,
       setFeedbackHistory,
       setIsAskingFollowUp,
@@ -1145,7 +1329,9 @@ function App() {
 
   const handleBackToDashboard = useCallback(async () => {
     resetApp()
+    setIsEditingProfile(false)
     setScreen('dashboard')
+    setUiError('')
     setPreviewSrcDoc('')
     setPreviewError('')
 
@@ -1245,12 +1431,26 @@ function App() {
     )
   }
 
+  if (screen === 'profile-onboarding' && tasks.length === 0 && !currentProjectId) {
+    return (
+      <ProfileOnboarding
+        initialProfile={profile}
+        onComplete={handleCompleteProfile}
+        isSaving={isSavingProfile}
+        errorMessage={uiError}
+        isEditing={isEditingProfile}
+        onExit={isEditingProfile ? handleBackToDashboard : null}
+      />
+    )
+  }
+
   if (screen === 'dashboard' && tasks.length === 0 && !currentProjectId) {
     return (
       <Dashboard
         projects={projects}
         isLoadingProjects={isLoadingProjects}
         onStartNewProject={handleStartNewProject}
+        onEditProfile={handleEditProfile}
         onContinueProject={handleContinueProject}
         onLogOut={handleLogOut}
         onRefresh={() => loadProjects(appUser.id)}
@@ -1293,7 +1493,7 @@ function App() {
             onClick={handleExportProject}
             disabled={isExporting || isImporting || projectFiles.length === 0}
           >
-            {isExporting ? 'Exporting...' : 'Export JSON'}
+            {isExporting ? 'Exporting...' : 'Download'}
           </button>
           <button
             type="button"
@@ -1301,12 +1501,12 @@ function App() {
             onClick={handleImportClick}
             disabled={isImporting || isExporting}
           >
-            {isImporting ? 'Importing...' : 'Import JSON'}
+            {isImporting ? 'Importing...' : 'Import'}
           </button>
           <input
             ref={importInputRef}
             type="file"
-            accept="application/json,.json"
+            accept="application/zip,.zip"
             className="hidden"
             onChange={handleImportProject}
           />
@@ -1331,6 +1531,8 @@ function App() {
 
       {uiError && <p className="text-red-600">{uiError}</p>}
       {isLoadingProjects && <p>Loading projects...</p>}
+      {isLoadingProfile && <p>Loading profile...</p>}
+      {isSavingProfile && <p>Saving profile...</p>}
       {isGeneratingRoadmap && <p>Generating roadmap...</p>}
       {isCheckingCode && !isCheckingBeforeComplete && <p>Checking code...</p>}
       {isCheckingBeforeComplete && <p>Checking code before completion...</p>}

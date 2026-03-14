@@ -10,6 +10,7 @@ function Dashboard({
   projects,
   isLoadingProjects,
   onStartNewProject,
+  onEditProfile,
   onContinueProject,
   onLogOut,
   onRefresh,
@@ -44,6 +45,14 @@ function Dashboard({
           disabled={isLoadingProjects}
         >
           Refresh
+        </button>
+        <button
+          type="button"
+          className={`${buttonSecondary} ${sizeMd}`}
+          onClick={onEditProfile}
+          disabled={isLoadingProjects}
+        >
+          Edit profile
         </button>
       </div>
 

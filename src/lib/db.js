@@ -1,9 +1,60 @@
 import { supabase, supabaseInitError } from './supabaseClient'
+import { normalizeProfile, toProfilePayload } from './profile'
 
 function getSupabaseUnavailableResponse() {
   return {
     data: null,
     error: supabaseInitError || new Error('Supabase is not configured.'),
+  }
+}
+
+export async function getUserProfile(userId) {
+  if (!supabase) {
+    return getSupabaseUnavailableResponse()
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle()
+
+    if (error) {
+      return { data: null, error }
+    }
+
+    return { data: data ? normalizeProfile(data) : null, error: null }
+  } catch (error) {
+    return { data: null, error }
+  }
+}
+
+export async function upsertUserProfile(userId, profileInput) {
+  if (!supabase) {
+    return getSupabaseUnavailableResponse()
+  }
+
+  try {
+    const payload = {
+      user_id: userId,
+      ...toProfilePayload(profileInput),
+      updated_at: new Date().toISOString(),
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .upsert(payload, { onConflict: 'user_id' })
+      .select('*')
+      .single()
+
+    if (error) {
+      return { data: null, error }
+    }
+
+    return { data: normalizeProfile(data), error: null }
+  } catch (error) {
+    return { data: null, error }
   }
 }
 

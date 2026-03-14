@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 
 const initialState = {
   user: null,
+  profile: null,
   currentProjectId: null,
   projectDescription: '',
   skillLevel: 'beginner',
@@ -17,6 +18,8 @@ const initialState = {
   isCheckingCode: false,
   isAskingFollowUp: false,
   isLoadingProjects: false,
+  isLoadingProfile: false,
+  isSavingProfile: false,
   isAuthenticating: false,
   isSavingFiles: false,
   fileError: '',
@@ -26,6 +29,7 @@ const initialState = {
 
 export function useAppState() {
   const [user, setUser] = useState(initialState.user)
+  const [profile, setProfile] = useState(initialState.profile)
   const [currentProjectId, setCurrentProjectId] = useState(
     initialState.currentProjectId,
   )
@@ -52,6 +56,12 @@ export function useAppState() {
   )
   const [isLoadingProjects, setIsLoadingProjects] = useState(
     initialState.isLoadingProjects,
+  )
+  const [isLoadingProfile, setIsLoadingProfile] = useState(
+    initialState.isLoadingProfile,
+  )
+  const [isSavingProfile, setIsSavingProfile] = useState(
+    initialState.isSavingProfile,
   )
   const [isAuthenticating, setIsAuthenticating] = useState(
     initialState.isAuthenticating,
@@ -131,6 +141,8 @@ export function useAppState() {
     setIsCheckingCode(initialState.isCheckingCode)
     setIsAskingFollowUp(initialState.isAskingFollowUp)
     setIsLoadingProjects(initialState.isLoadingProjects)
+    setIsLoadingProfile(initialState.isLoadingProfile)
+    setIsSavingProfile(initialState.isSavingProfile)
     setIsSavingFiles(initialState.isSavingFiles)
     setFileError(initialState.fileError)
     setIsImporting(initialState.isImporting)
@@ -139,6 +151,7 @@ export function useAppState() {
 
   return {
     user,
+    profile,
     currentProjectId,
     projectDescription,
     skillLevel,
@@ -154,12 +167,15 @@ export function useAppState() {
     isCheckingCode,
     isAskingFollowUp,
     isLoadingProjects,
+    isLoadingProfile,
+    isSavingProfile,
     isAuthenticating,
     isSavingFiles,
     fileError,
     isImporting,
     isExporting,
     setUser,
+    setProfile,
     setCurrentProjectId,
     setProjectDescription,
     setSkillLevel,
@@ -179,6 +195,8 @@ export function useAppState() {
     setIsCheckingCode,
     setIsAskingFollowUp,
     setIsLoadingProjects,
+    setIsLoadingProfile,
+    setIsSavingProfile,
     setIsAuthenticating,
     setIsSavingFiles,
     setFileError,

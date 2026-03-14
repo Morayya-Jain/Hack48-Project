@@ -24,68 +24,74 @@ function isLikelySentence(line) {
     return false
   }
 
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length
   return (
     /^[A-Za-z]/.test(trimmed) &&
     /[.?!]$/.test(trimmed) &&
-    !/[{}()[\];=<>&]/.test(trimmed)
+    !/[{}()[\];=<>&]/.test(trimmed) &&
+    wordCount >= 5
   )
 }
 
-function isCodeLikeLine(line) {
+function getCodeSignalScore(line) {
   const trimmed = line.trim()
   if (!trimmed) {
-    return false
+    return 0
   }
 
   if (/^[-*]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed)) {
-    return false
+    return 0
   }
 
   if (/^>{1,}\s+/.test(trimmed) || /^#{1,6}\s+/.test(trimmed)) {
-    return false
+    return 0
   }
 
   if (isLikelySentence(trimmed)) {
-    return false
+    return 0
   }
 
   if (/^<\/?[a-z][\w-]*(\s+[^>]*)?>$/i.test(trimmed)) {
-    return true
+    return 2
   }
 
-  if (/[{}()[\];]/.test(trimmed)) {
-    return true
+  if (/[{}[\];]/.test(trimmed)) {
+    return 2
   }
 
   if (/(=>|===|!==|:=|::|\+\+|--|&&|\|\|)/.test(trimmed)) {
-    return true
+    return 2
   }
 
   if (
-    /^\s*(const|let|var|function|if|else|for|while|switch|case|return|class|import|export|from|async|await|try|catch|throw|new|def|print|lambda|select|insert|update|delete|create|alter|drop|with|where|join|public|private|protected|interface|type|enum)\b/i.test(
+    /^\s*(const|let|var)\s+[A-Za-z_$][\w$]*/.test(trimmed) ||
+    /^\s*(def|class|function)\s+[A-Za-z_$][\w$]*/.test(trimmed) ||
+    /^\s*(if|for|while|switch|catch)\s*\(/.test(trimmed) ||
+    /^\s*(return|await|throw|import|export)\b/.test(trimmed) ||
+    /^\s*(select|insert|update|delete|create|alter|drop|with|where|join)\b/i.test(
       trimmed,
     )
   ) {
-    return true
+    return 2
   }
 
   if (/\b(console\.log|document\.|window\.|setTimeout|fetch)\b/.test(trimmed)) {
-    return true
+    return 2
   }
 
   if (/^[\w$.]+\([^)]*\)\s*;?$/.test(trimmed)) {
-    return true
+    return 1
   }
 
   if (/^[\w$]+\s*=\s*.+/.test(trimmed)) {
-    return true
+    return 2
   }
 
-  if (/^\s{2,}\S+/.test(line) || /^\t\S+/.test(line)) {
-    return true
+  if ((/^\s{2,}\S+/.test(line) || /^\t\S+/.test(line)) && /[=(){}[\];]/.test(trimmed)) {
+    return 2
   }
 
-  return false
+  return 0
 }
 
 function isLikelyCodeRun(lines) {
@@ -94,20 +100,34 @@ function isLikelyCodeRun(lines) {
     return false
   }
 
-  const codeLikeCount = nonEmptyLines.filter((line) => isCodeLikeLine(line)).length
-  if (codeLikeCount < 2) {
-    return false
-  }
+  const scores = nonEmptyLines.map((line) => getCodeSignalScore(line))
+  const strongSignals = scores.filter((score) => score >= 2).length
+  const anySignals = scores.filter((score) => score > 0).length
 
-  const ratio = codeLikeCount / nonEmptyLines.length
-  if (ratio >= 0.75) {
+  if (strongSignals >= 2) {
     return true
   }
 
-  if (
-    ratio >= 0.6 &&
-    nonEmptyLines.some((line) => /^\s{2,}\S+/.test(line) || /^\t\S+/.test(line))
-  ) {
+  if (strongSignals < 1) {
+    return false
+  }
+
+  if (anySignals !== nonEmptyLines.length) {
+    return false
+  }
+
+  const hasProseLikeLine = nonEmptyLines.some((line) => {
+    const trimmed = line.trim()
+    const wordCount = trimmed.split(/\s+/).filter(Boolean).length
+    return wordCount >= 8 && /[.?!]$/.test(trimmed)
+  })
+
+  if (hasProseLikeLine) {
+    return false
+  }
+
+  const signalRatio = anySignals / nonEmptyLines.length
+  if (signalRatio >= 0.75) {
     return true
   }
 
@@ -240,4 +260,3 @@ export function parseRichTextSegments(input) {
     return [{ type: 'text', content: text }]
   }
 }
-

@@ -1,5 +1,12 @@
 import { useCallback } from 'react'
 import { buildFollowUpPrompt } from '../lib/followUpMentor.js'
+import {
+  INTEREST_OPTIONS,
+  SKILL_OPTIONS,
+  expertiseLabel,
+  labelsForValues,
+  normalizeProfile,
+} from '../lib/profile'
 import { sanitizeLanguage } from '../lib/runtimeUtils.js'
 
 const GEMINI_URL =
@@ -33,6 +40,43 @@ function toText(value) {
 
 function getGeminiText(data) {
   return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+}
+
+function expertiseResponseStyle(expertiseLevel) {
+  if (expertiseLevel === 'beginner') {
+    return 'Explain from first principles in small steps, define basic terms, and avoid assumptions.'
+  }
+
+  if (expertiseLevel === 'exploring') {
+    return 'Use clear practical guidance with short explanations and one concrete next action.'
+  }
+
+  if (expertiseLevel === 'student') {
+    return 'Use structured coaching, reinforce reasoning, and connect concepts to implementation.'
+  }
+
+  if (expertiseLevel === 'master') {
+    return 'Be concise and technical, focus on tradeoffs, edge cases, and advanced execution detail.'
+  }
+
+  return 'Use balanced coaching with clear, practical guidance.'
+}
+
+function buildProfilePromptBlock(profileContext) {
+  const normalized = normalizeProfile(profileContext)
+  const skillLabels = labelsForValues(normalized.skills, SKILL_OPTIONS)
+  const interestLabels = labelsForValues(normalized.interests, INTEREST_OPTIONS)
+  const styleGuide = expertiseResponseStyle(normalized.expertiseLevel)
+
+  return `Learner profile:
+- Expertise: ${expertiseLabel(normalized.expertiseLevel)}
+- Skills to explore: ${skillLabels.length > 0 ? skillLabels.join(', ') : 'None specified'}
+- Interests: ${interestLabels.length > 0 ? interestLabels.join(', ') : 'None specified'}
+
+Personalization rules:
+- ${styleGuide}
+- If skills/interests are provided, bias examples and language toward those areas.
+- If skills/interests are missing, keep examples generally relevant and beginner-safe.`
 }
 
 function parseCodeCheckResult(text) {
@@ -141,8 +185,9 @@ async function callGemini(prompt, options = {}) {
 }
 
 export function useGemini() {
-  const generateRoadmap = useCallback(async (projectDescription, skillLevel) => {
-    const basePrompt = `You are a coding mentor. The user wants to build: ${projectDescription}.\nTheir skill level is: ${skillLevel}.\nGenerate a learning roadmap as a JSON array of exactly 6 tasks.\nEach task guides the user to implement one specific piece of the project themselves.\nNever give code directly in the description or hint fields.\nReturn ONLY a valid raw JSON array. No markdown, no backticks, no explanation.\nSchema: [{id, title, description, hint, exampleOutput, language}]\nThe language field must be one of: javascript, typescript, python, html, sql, java, csharp, go, rust, ruby, php, swift, kotlin.\nUse language only as a task-level lock when clearly appropriate.\nThe exampleOutput field may contain code as it is shown only when explicitly requested.`
+  const generateRoadmap = useCallback(async (projectDescription, skillLevel, profileContext = null) => {
+    const profileBlock = buildProfilePromptBlock(profileContext)
+    const basePrompt = `You are a coding mentor. The user wants to build: ${projectDescription}.\nTheir selected project skill level is: ${skillLevel}.\n${profileBlock}\nGenerate a learning roadmap as a JSON array of exactly 6 tasks.\nEach task guides the user to implement one specific piece of the project themselves.\nNever give code directly in the description or hint fields.\nReturn ONLY a valid raw JSON array. No markdown, no backticks, no explanation.\nSchema: [{id, title, description, hint, exampleOutput, language}]\nThe language field must be one of: javascript, typescript, python, html, sql, java, csharp, go, rust, ruby, php, swift, kotlin.\nUse language only as a task-level lock when clearly appropriate.\nThe exampleOutput field may contain code as it is shown only when explicitly requested.`
 
     const firstAttempt = await callGemini(basePrompt, {
       temperature: 0.7,
@@ -212,14 +257,16 @@ export function useGemini() {
     }
   }, [])
 
-  const checkUserCode = useCallback(async (task, userCode) => {
+  const checkUserCode = useCallback(async (task, userCode, profileContext = null) => {
     const exampleOutput = toText(task?.exampleOutput ?? '').trim()
+    const profileBlock = buildProfilePromptBlock(profileContext)
     const prompt = `You are a strict coding mentor and code evaluator.
 Evaluate whether the user's code satisfies the current task and expected output.
 
 Task title: ${toText(task?.title)}
 Task description: ${toText(task?.description)}
 Expected example output (may be empty): ${exampleOutput || 'N/A'}
+${profileBlock}
 
 User code:
 ${userCode}
@@ -273,13 +320,21 @@ No markdown. No extra keys.`
   }, [])
 
   const askFollowUp = useCallback(
-    async (task, userCode, userQuestion, feedbackHistory, skillLevel) => {
+    async (
+      task,
+      userCode,
+      userQuestion,
+      feedbackHistory,
+      skillLevel,
+      profileContext = null,
+    ) => {
       const prompt = buildFollowUpPrompt({
         task,
         userCode,
         userQuestion,
         feedbackHistory,
         skillLevel,
+        profileContext,
       })
 
       const result = await callGemini(prompt, {
