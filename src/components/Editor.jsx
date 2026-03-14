@@ -10,8 +10,11 @@ function Editor({
   tabs = [],
   activeTabId = null,
   onSelectTab,
+  height,
 }) {
   const editorLanguage = language || detectLanguage(projectDescription, value)
+  const editorHeightStyle = height ? { height } : undefined
+  const editorHeightClass = height ? 'h-full' : 'h-[22rem] sm:h-[24rem] md:h-[28rem] lg:h-[32rem]'
 
   return (
     <section className="shrink-0 overflow-hidden border border-slate-300 bg-white">
@@ -34,7 +37,7 @@ function Editor({
           ))}
         </div>
       ) : null}
-      <div className="h-[22rem] sm:h-[24rem] md:h-[28rem] lg:h-[32rem]">
+      <div className={editorHeightClass} style={editorHeightStyle}>
         <MonacoEditor
           height="100%"
           language={editorLanguage}

@@ -246,7 +246,13 @@ function formatSqlResultSet(resultSet) {
   return lines.join('\n')
 }
 
-function RunConsole({ code, detectedLanguage, lockedLanguage = '', onRunPreview }) {
+function RunConsole({
+  code,
+  detectedLanguage,
+  lockedLanguage = '',
+  onRunPreview,
+  fillHeight = false,
+}) {
   const [selectedLanguage, setSelectedLanguage] = useState('auto')
   const [outputLines, setOutputLines] = useState([])
   const [isRunning, setIsRunning] = useState(false)
@@ -726,9 +732,15 @@ function RunConsole({ code, detectedLanguage, lockedLanguage = '', onRunPreview 
   }, [canTriggerPreview, isPreparingRuntime, isPython, isRunning, isSql, isTypescript])
 
   const compactActionButtonClass = 'px-2.5 py-1 text-xs leading-5'
+  const containerClass = fillHeight
+    ? 'flex min-h-0 flex-1 flex-col gap-2 border border-slate-300 bg-white p-2'
+    : 'flex flex-col gap-2 border border-slate-300 bg-white p-2'
+  const outputPanelClass = fillHeight
+    ? 'min-h-32 flex-1 overflow-auto border bg-slate-950 p-2 font-mono text-sm whitespace-pre-wrap text-slate-100'
+    : 'max-h-60 min-h-32 overflow-auto border bg-slate-950 p-2 font-mono text-sm whitespace-pre-wrap text-slate-100'
 
   return (
-    <section className="flex flex-col gap-2 border border-slate-300 bg-white p-2">
+    <section className={containerClass}>
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-2">
         <label htmlFor="runtime-language" className="text-xs text-slate-700">
           Language
@@ -782,7 +794,7 @@ function RunConsole({ code, detectedLanguage, lockedLanguage = '', onRunPreview 
         <div
           id="run-output-console"
           ref={outputPanelRef}
-          className="max-h-60 min-h-32 overflow-auto border bg-slate-950 p-2 font-mono text-sm whitespace-pre-wrap text-slate-100"
+          className={outputPanelClass}
         >
           {outputLines.length === 0 ? (
             <p className="text-slate-300">Run your code to see output.</p>

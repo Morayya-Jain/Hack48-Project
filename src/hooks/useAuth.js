@@ -1,6 +1,27 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase, supabaseInitError } from '../lib/supabaseClient'
 
+const SESSION_LOAD_TIMEOUT_MS = 8000
+
+async function withTimeout(promise, timeoutMs, timeoutMessage) {
+  let timeoutId
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          reject(new Error(timeoutMessage))
+        }, timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+    }
+  }
+}
+
 function getEmailRedirectTo() {
   if (typeof window === 'undefined') {
     return undefined
@@ -52,7 +73,11 @@ export function useAuth() {
     const loadSession = async () => {
       setIsAuthenticating(true)
       try {
-        const { data, error } = await supabase.auth.getSession()
+        const { data, error } = await withTimeout(
+          supabase.auth.getSession(),
+          SESSION_LOAD_TIMEOUT_MS,
+          'Session check timed out. Please verify your Supabase connection.',
+        )
 
         if (!isMounted) {
           return

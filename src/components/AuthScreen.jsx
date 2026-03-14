@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import logo from '../assets/dojobuild-logo.png'
 
 function AuthScreen({
@@ -12,7 +12,8 @@ function AuthScreen({
   authError,
   authInfo,
 }) {
-  const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'login')
+  const normalizedInitialMode = initialMode === 'signup' ? 'signup' : 'login'
+  const [mode, setMode] = useState(normalizedInitialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
@@ -23,6 +24,10 @@ function AuthScreen({
     !isLoginMode &&
     Boolean(resendEligibleEmail) &&
     resendEligibleEmail.toLowerCase() === trimmedEmail.toLowerCase()
+
+  useEffect(() => {
+    setMode(normalizedInitialMode)
+  }, [normalizedInitialMode])
 
   const handleSubmit = async (event) => {
     event.preventDefault()

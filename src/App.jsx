@@ -17,6 +17,7 @@ import workspaceLogo from './assets/workspace-logo.png'
 import { useAppState } from './hooks/useAppState'
 import { useAuth } from './hooks/useAuth'
 import { useGemini } from './hooks/useGemini'
+import { useWorkspacePaneLayout } from './hooks/useWorkspacePaneLayout'
 import {
   buttonDanger,
   buttonPrimary,
@@ -372,6 +373,27 @@ function App() {
   const importInputRef = useRef(null)
   const isSignupTransitionPendingRef = useRef(false)
   const signupConfigureLoaderStartedAtRef = useRef(0)
+  const {
+    workspaceRef,
+    centerPaneRef,
+    isDesktopLayout,
+    leftWidthPct,
+    rightWidthPct,
+    leftCollapsed,
+    rightCollapsed,
+    editorHeightPx,
+    bottomPaneCollapsed,
+    activeDragType,
+    railWidthPx,
+    splitterSizePx,
+    beginLeftResize,
+    beginRightResize,
+    beginCenterResize,
+    beginCenterBottomResize,
+    toggleLeftCollapsed,
+    toggleRightCollapsed,
+    toggleBottomPaneCollapsed,
+  } = useWorkspacePaneLayout()
 
   const showTimedFileNotice = useCallback((message, timeoutMs = 3500) => {
     setFileNotice(message)
@@ -2357,7 +2379,16 @@ function App() {
   }
 
   if (isAuthenticatingState) {
-    return <p className="p-4">Loading auth state...</p>
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-100 px-6 py-10">
+        <section className="max-w-lg text-center">
+          <p className="text-xl font-semibold text-slate-900">Loading DojoBuild...</p>
+          <p className="mt-2 text-sm text-slate-600">
+            Verifying your session. If this takes too long, refresh and check Supabase env vars.
+          </p>
+        </section>
+      </main>
+    )
   }
 
   if (!appUser) {
@@ -2458,6 +2489,154 @@ function App() {
     fileError ||
     fileNotice
 
+  const isLeftDragActive = activeDragType === 'left'
+  const isRightDragActive = activeDragType === 'right'
+  const isCenterDragActive =
+    activeDragType === 'center' || activeDragType === 'center-bottom'
+  const isCenterBottomDragActive = activeDragType === 'center-bottom'
+  const leftDesktopWidth = leftCollapsed ? `${railWidthPx}px` : `${leftWidthPct}%`
+  const rightDesktopWidth = rightCollapsed ? `${railWidthPx}px` : `${rightWidthPct}%`
+  const leftPaneStyle = isDesktopLayout
+    ? {
+      flex: `0 0 ${leftDesktopWidth}`,
+      width: leftDesktopWidth,
+    }
+    : undefined
+  const rightPaneStyle = isDesktopLayout
+    ? {
+      flex: `0 0 ${rightDesktopWidth}`,
+      width: rightDesktopWidth,
+    }
+    : undefined
+  const editorHeight = isDesktopLayout ? `${editorHeightPx}px` : undefined
+
+  const leftWorkspacePane = (
+    <>
+      <FileTree
+        files={projectFiles}
+        activeFileId={activeFile?.id || null}
+        onSelectFile={handleSelectFile}
+        onCreateFile={handleCreateFile}
+        onRenameFile={handleRenameFile}
+        onDeleteFile={handleDeleteFile}
+        isBusy={isSavingFiles || isImporting || isExporting}
+        errorMessage={fileError}
+      />
+
+      <div className="mt-8">
+        <Roadmap
+          tasks={tasks}
+          currentTaskIndex={currentTaskIndex}
+          onSelectTask={handleSelectTask}
+        />
+      </div>
+    </>
+  )
+
+  const runAndPreviewPane = (
+    <>
+      <RunConsole
+        key={currentTask?.id || 'run-console'}
+        code={userCode}
+        detectedLanguage={detectedLanguage}
+        fileLanguage={activeFileLanguage}
+        lockedLanguage={lockedTaskLanguage}
+        hasLockedLanguageMismatch={hasLockedLanguageMismatch}
+        onResolveLockedLanguageMismatch={handleResolveTaskLanguageMismatch}
+        onRunPreview={handleRunPreview}
+        fillHeight={isDesktopLayout && !showHtmlPreview}
+      />
+      {showHtmlPreview ? (
+        <section className="flex flex-col gap-2 rounded-xl border border-slate-300 bg-white p-3">
+          <h2 className="text-lg font-semibold text-slate-900">Live Preview</h2>
+          <p className="text-sm text-slate-700">
+            Click <strong>Refresh Preview</strong> in Run &amp; Output to update this panel.
+          </p>
+          {previewError ? <p className="text-red-600">{previewError}</p> : null}
+          <iframe
+            title="Project preview"
+            srcDoc={previewSrcDoc || '<p>Run preview to render your files.</p>'}
+            sandbox="allow-scripts"
+            className="h-64 w-full rounded-lg border border-slate-300"
+          />
+        </section>
+      ) : null}
+    </>
+  )
+
+  const rightWorkspacePane = (
+    <div className="flex flex-col gap-4">
+      <section className="rounded-xl border border-slate-300 bg-slate-50 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Task {currentTaskIndex + 1}
+            </p>
+            <h2 className="truncate text-base font-semibold text-slate-900">
+              {currentTask?.title || 'No task selected'}
+            </h2>
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-100"
+            onClick={() => setIsTaskCardExpanded((prev) => !prev)}
+            aria-expanded={isTaskCardExpanded}
+            aria-label={isTaskCardExpanded ? 'Collapse task details' : 'Expand task details'}
+          >
+            {isTaskCardExpanded ? '-' : '+'}
+          </button>
+        </div>
+
+        {isTaskCardExpanded ? (
+          <p className="mt-2 text-sm text-slate-700">
+            {taskDescription || 'Task details appear here.'}
+          </p>
+        ) : (
+          <p className="mt-2 text-sm text-slate-600">
+            {taskDescriptionPreview || 'Task details appear here.'}
+          </p>
+        )}
+        {!isTaskCardExpanded && isTaskDescriptionTruncated ? (
+          <p className="mt-1 text-xs text-slate-500">Tap + to view full task details.</p>
+        ) : null}
+
+        <button
+          type="button"
+          className={`${buttonPrimary} mt-2 w-full rounded-md border-emerald-600 bg-emerald-500 px-3 py-1.5 text-xs hover:border-emerald-500 hover:bg-emerald-400`}
+          onClick={handleMarkCurrentTaskComplete}
+          disabled={
+            !currentTask ||
+            isCheckingCode ||
+            isCheckingBeforeComplete ||
+            isMarkingTaskComplete
+          }
+        >
+          {markAsCompleteLabel}
+        </button>
+      </section>
+
+      <HintBox
+        task={currentTask}
+        hintsUsed={hintsUsed}
+        exampleViewed={exampleViewed}
+        onGiveHint={incrementHints}
+        onShowExample={() => setExampleViewed((prev) => !prev)}
+        isDisabled={!currentTask}
+      />
+      <FeedbackPanel
+        feedbackHistory={feedbackHistory}
+        isCheckingCode={isCheckingCode}
+        isAskingFollowUp={isAskingFollowUp}
+        followUpSuggestions={followUpSuggestions}
+        isGeneratingFollowUpSuggestions={isGeneratingFollowUpSuggestions}
+        followUpSuggestionsNotice={followUpSuggestionsNotice}
+        onCheckCode={handleCheckCode}
+        onAskFollowUp={handleFollowUp}
+        errorMessage={uiError}
+      />
+    </div>
+  )
+
   return (
     <main className="min-h-svh bg-slate-50">
       <header className="border-b border-slate-200 bg-white px-4 py-4 md:px-6">
@@ -2530,138 +2709,203 @@ function App() {
         </section>
       ) : null}
 
-      <section className="grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)_360px]">
-        <aside className="border-b border-slate-200 bg-white p-4 xl:min-h-[calc(100svh-150px)] xl:border-b-0 xl:border-r">
-          <FileTree
-            files={projectFiles}
-            activeFileId={activeFile?.id || null}
-            onSelectFile={handleSelectFile}
-            onCreateFile={handleCreateFile}
-            onRenameFile={handleRenameFile}
-            onDeleteFile={handleDeleteFile}
-            isBusy={isSavingFiles || isImporting || isExporting}
-            errorMessage={fileError}
-          />
-
-          <div className="mt-8">
-            <Roadmap
-              tasks={tasks}
-              currentTaskIndex={currentTaskIndex}
-              onSelectTask={handleSelectTask}
-            />
-          </div>
+      <section
+        ref={workspaceRef}
+        className="flex flex-col md:h-[calc(100svh-150px)] md:flex-row md:items-stretch"
+      >
+        <aside
+          className={`border-b border-slate-200 bg-white p-4 md:h-[calc(100svh-150px)] md:border-b-0 md:overflow-auto ${
+            isDesktopLayout && !leftCollapsed ? 'md:border-r' : ''
+          }`}
+          style={leftPaneStyle}
+        >
+          {isDesktopLayout && leftCollapsed ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3">
+              <button
+                type="button"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 bg-white text-lg font-semibold text-slate-700 hover:bg-slate-100"
+                onClick={toggleLeftCollapsed}
+                aria-label="Expand left pane"
+              >
+                &gt;
+              </button>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500 [writing-mode:vertical-rl]">
+                Explorer
+              </p>
+            </div>
+          ) : (
+            leftWorkspacePane
+          )}
         </aside>
 
-        <div className="flex min-w-0 flex-col gap-3 border-b border-slate-200 bg-white p-3 md:p-4 xl:border-b-0 xl:border-r">
-          <Editor
-            projectDescription={projectDescription}
-            value={activeFile?.content || ''}
-            onChange={handleEditorChange}
-            readOnly={Boolean(currentTask?.completed) && firstIncompleteIndex !== -1}
-            language={editorLanguage}
-            tabs={fileTabs}
-            activeTabId={activeFile?.id || null}
-            onSelectTab={handleSelectFile}
+        <div
+          className="group relative hidden shrink-0 cursor-col-resize items-center justify-center md:flex"
+          style={{ width: `${splitterSizePx}px` }}
+          onPointerDown={beginLeftResize}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize left pane"
+        >
+          <div
+            className={`h-full w-px bg-slate-300 transition-opacity ${
+              isLeftDragActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            }`}
           />
-
-          <RunConsole
-            key={currentTask?.id || 'run-console'}
-            code={userCode}
-            detectedLanguage={detectedLanguage}
-            fileLanguage={activeFileLanguage}
-            lockedLanguage={lockedTaskLanguage}
-            hasLockedLanguageMismatch={hasLockedLanguageMismatch}
-            onResolveLockedLanguageMismatch={handleResolveTaskLanguageMismatch}
-            onRunPreview={handleRunPreview}
-          />
-          {showHtmlPreview ? (
-            <section className="flex flex-col gap-2 rounded-xl border border-slate-300 bg-white p-3">
-              <h2 className="text-lg font-semibold text-slate-900">Live Preview</h2>
-              <p className="text-sm text-slate-700">
-                Click <strong>Refresh Preview</strong> in Run &amp; Output to update this panel.
-              </p>
-              {previewError ? <p className="text-red-600">{previewError}</p> : null}
-              <iframe
-                title="Project preview"
-                srcDoc={previewSrcDoc || '<p>Run preview to render your files.</p>'}
-                sandbox="allow-scripts"
-                className="h-64 w-full rounded-lg border border-slate-300"
-              />
-            </section>
+          {!leftCollapsed ? (
+            <button
+              type="button"
+              className={`absolute left-1/2 top-1/2 inline-flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border border-slate-300 bg-white text-xs font-semibold text-slate-700 shadow-sm transition-opacity hover:bg-slate-100 ${
+                isLeftDragActive
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+              }`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={toggleLeftCollapsed}
+              aria-label="Collapse left pane"
+            >
+              {'<'}
+            </button>
           ) : null}
         </div>
 
-        <aside className="bg-white p-4 xl:min-h-[calc(100svh-150px)]">
-          <div className="flex flex-col gap-4">
-            <section className="rounded-xl border border-slate-300 bg-slate-50 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Task {currentTaskIndex + 1}
-                  </p>
-                  <h2 className="truncate text-base font-semibold text-slate-900">
-                    {currentTask?.title || 'No task selected'}
-                  </h2>
-                </div>
-                <button
-                  type="button"
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-100"
-                  onClick={() => setIsTaskCardExpanded((prev) => !prev)}
-                  aria-expanded={isTaskCardExpanded}
-                  aria-label={isTaskCardExpanded ? 'Collapse task details' : 'Expand task details'}
-                >
-                  {isTaskCardExpanded ? '-' : '+'}
-                </button>
-              </div>
-
-              {isTaskCardExpanded ? (
-                <p className="mt-2 text-sm text-slate-700">
-                  {taskDescription || 'Task details appear here.'}
-                </p>
-              ) : (
-                <p className="mt-2 text-sm text-slate-600">
-                  {taskDescriptionPreview || 'Task details appear here.'}
-                </p>
-              )}
-              {!isTaskCardExpanded && isTaskDescriptionTruncated ? (
-                <p className="mt-1 text-xs text-slate-500">Tap + to view full task details.</p>
-              ) : null}
-
-              <button
-                type="button"
-                className={`${buttonPrimary} mt-2 w-full rounded-md border-emerald-600 bg-emerald-500 px-3 py-1.5 text-xs hover:border-emerald-500 hover:bg-emerald-400`}
-                onClick={handleMarkCurrentTaskComplete}
-                disabled={
-                  !currentTask ||
-                  isCheckingCode ||
-                  isCheckingBeforeComplete ||
-                  isMarkingTaskComplete
-                }
-              >
-                {markAsCompleteLabel}
-              </button>
-            </section>
-
-            <HintBox
-              task={currentTask}
-              hintsUsed={hintsUsed}
-              exampleViewed={exampleViewed}
-              onGiveHint={incrementHints}
-              onShowExample={() => setExampleViewed((prev) => !prev)}
-              isDisabled={!currentTask}
-            />
-            <FeedbackPanel
-              feedbackHistory={feedbackHistory}
-              isCheckingCode={isCheckingCode}
-              isAskingFollowUp={isAskingFollowUp}
-              followUpSuggestions={followUpSuggestions}
-              isGeneratingFollowUpSuggestions={isGeneratingFollowUpSuggestions}
-              followUpSuggestionsNotice={followUpSuggestionsNotice}
-              onCheckCode={handleCheckCode}
-              onAskFollowUp={handleFollowUp}
-              errorMessage={uiError}
+        <div
+          ref={centerPaneRef}
+          className="flex min-w-0 flex-1 flex-col gap-3 border-b border-slate-200 bg-white p-3 md:h-[calc(100svh-150px)] md:border-b-0 md:border-r md:p-4"
+        >
+          <div className={isDesktopLayout ? 'min-h-0 shrink-0' : ''}>
+            <Editor
+              projectDescription={projectDescription}
+              value={activeFile?.content || ''}
+              onChange={handleEditorChange}
+              readOnly={Boolean(currentTask?.completed) && firstIncompleteIndex !== -1}
+              language={editorLanguage}
+              tabs={fileTabs}
+              activeTabId={activeFile?.id || null}
+              onSelectTab={handleSelectFile}
+              height={editorHeight}
             />
           </div>
+
+          {isDesktopLayout && !bottomPaneCollapsed ? (
+            <div
+              className="group relative -my-1 flex h-2 shrink-0 cursor-row-resize items-center justify-center"
+              onPointerDown={beginCenterResize}
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize editor and output panes"
+            >
+              <div
+                className={`h-px w-full bg-slate-300 transition-opacity ${
+                  isCenterDragActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+              />
+              <button
+                type="button"
+                className={`absolute right-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-slate-300 bg-white text-xs font-semibold text-slate-700 shadow-sm transition-opacity hover:bg-slate-100 ${
+                  isCenterDragActive
+                    ? 'opacity-100'
+                    : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+                }`}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={toggleBottomPaneCollapsed}
+                aria-label="Collapse run and output pane"
+              >
+                -
+              </button>
+            </div>
+          ) : null}
+
+          {isDesktopLayout ? (
+            bottomPaneCollapsed ? (
+              <div className="flex h-10 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-slate-50">
+                <button
+                  type="button"
+                  className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                  onClick={toggleBottomPaneCollapsed}
+                >
+                  Expand Run &amp; Output
+                </button>
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <div
+                  className={`flex min-h-0 flex-1 flex-col ${
+                    showHtmlPreview ? 'gap-3 overflow-auto' : 'overflow-hidden'
+                  }`}
+                >
+                  {runAndPreviewPane}
+                </div>
+                <div
+                  className="group relative mt-1 flex h-2 shrink-0 cursor-row-resize items-center justify-center"
+                  onPointerDown={beginCenterBottomResize}
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label="Resize output pane from bottom edge"
+                >
+                  <div
+                    className={`h-px w-full bg-slate-300 transition-opacity ${
+                      isCenterBottomDragActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                    }`}
+                  />
+                </div>
+              </div>
+            )
+          ) : (
+            runAndPreviewPane
+          )}
+        </div>
+
+        <div
+          className="group relative hidden shrink-0 cursor-col-resize items-center justify-center md:flex"
+          style={{ width: `${splitterSizePx}px` }}
+          onPointerDown={beginRightResize}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize right pane"
+        >
+          <div
+            className={`h-full w-px bg-slate-300 transition-opacity ${
+              isRightDragActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            }`}
+          />
+          {!rightCollapsed ? (
+            <button
+              type="button"
+              className={`absolute left-1/2 top-1/2 inline-flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border border-slate-300 bg-white text-xs font-semibold text-slate-700 shadow-sm transition-opacity hover:bg-slate-100 ${
+                isRightDragActive
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+              }`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={toggleRightCollapsed}
+              aria-label="Collapse right pane"
+            >
+              {'>'}
+            </button>
+          ) : null}
+        </div>
+
+        <aside
+          className="bg-white p-4 md:h-[calc(100svh-150px)] md:overflow-auto"
+          style={rightPaneStyle}
+        >
+          {isDesktopLayout && rightCollapsed ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3">
+              <button
+                type="button"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 bg-white text-lg font-semibold text-slate-700 hover:bg-slate-100"
+                onClick={toggleRightCollapsed}
+                aria-label="Expand right pane"
+              >
+                &lt;
+              </button>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500 [writing-mode:vertical-rl]">
+                Mentor
+              </p>
+            </div>
+          ) : (
+            rightWorkspacePane
+          )}
         </aside>
       </section>
     </main>
