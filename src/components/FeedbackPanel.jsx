@@ -14,6 +14,10 @@ function FeedbackPanel({
   errorMessage,
 }) {
   const [question, setQuestion] = useState('')
+  const isQuestionEmpty = question.trim().length === 0
+  const feedbackWindowHeightClass = isQuestionEmpty
+    ? 'min-h-[170px] max-h-[260px]'
+    : 'min-h-[320px] max-h-[420px]'
 
   const handleFollowUp = async (event) => {
     event.preventDefault()
@@ -43,7 +47,9 @@ function FeedbackPanel({
         {isCheckingCode ? 'Checking code...' : 'Check My Code'}
       </button>
 
-      <div className="min-h-[320px] max-h-[420px] overflow-auto rounded-xl border border-slate-300 bg-slate-50 p-3">
+      <div
+        className={`${feedbackWindowHeightClass} overflow-auto rounded-xl border border-slate-300 bg-slate-50 p-3 transition-[min-height,max-height] duration-200`}
+      >
         {feedbackHistory.length === 0 ? (
           <p className="text-sm leading-6 text-slate-500">No feedback yet.</p>
         ) : (

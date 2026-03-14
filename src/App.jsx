@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AuthScreen from './components/AuthScreen'
 import CompletionScreen from './components/CompletionScreen'
+import ConfigureDojoLoadingScreen from './components/ConfigureDojoLoadingScreen'
 import Dashboard from './components/Dashboard'
 import Editor from './components/Editor'
 import FeedbackPanel from './components/FeedbackPanel'
 import FileTree from './components/FileTree'
 import HintBox from './components/HintBox'
+import LandingPage from './components/LandingPage'
 import Onboarding from './components/Onboarding'
 import ProfileOnboarding from './components/ProfileOnboarding'
 import ProgressBar from './components/ProgressBar'
@@ -145,6 +147,116 @@ function isProfilesTableMissing(error) {
   )
 }
 
+const SIGNUP_CONFIGURE_MIN_DURATION_MS = 3000
+
+function parseHashWorkspaceState() {
+  const fallback = {
+    screen: 'dashboard',
+    projectId: '',
+    taskIndex: null,
+    filePath: '',
+  }
+
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+
+  const rawHash = window.location.hash || ''
+  const normalizedHash = rawHash.startsWith('#') ? rawHash.slice(1) : rawHash
+  const [rawPath = '', rawQuery = ''] = normalizedHash.split('?')
+  const path = rawPath.replace(/^\/+/, '').trim()
+
+  const params = new URLSearchParams(rawQuery)
+  const rawTaskIndex = Number.parseInt(params.get('task') || '', 10)
+  const taskIndex =
+    Number.isInteger(rawTaskIndex) && rawTaskIndex >= 0 ? rawTaskIndex : null
+  const filePath = params.get('file') || ''
+
+  if (!path || path === 'dashboard') {
+    return fallback
+  }
+
+  if (path === 'new-project') {
+    return {
+      ...fallback,
+      screen: 'new-project',
+    }
+  }
+
+  if (path === 'profile' || path === 'profile-onboarding') {
+    return {
+      ...fallback,
+      screen: 'profile-onboarding',
+    }
+  }
+
+  const projectMatch = path.match(/^project\/([^/]+)\/(workspace|completion)$/)
+  if (!projectMatch) {
+    return fallback
+  }
+
+  let projectId = ''
+  try {
+    projectId = decodeURIComponent(projectMatch[1] || '')
+  } catch {
+    projectId = projectMatch[1] || ''
+  }
+
+  return {
+    screen: projectMatch[2],
+    projectId,
+    taskIndex,
+    filePath,
+  }
+}
+
+function buildHashFromWorkspaceState({
+  screen,
+  currentProjectId,
+  currentTaskIndex,
+  activeFilePath = '',
+}) {
+  if (screen === 'workspace' && currentProjectId) {
+    const params = new URLSearchParams()
+    if (Number.isInteger(currentTaskIndex) && currentTaskIndex >= 0) {
+      params.set('task', String(currentTaskIndex))
+    }
+    if (activeFilePath) {
+      params.set('file', activeFilePath)
+    }
+
+    const base = `/project/${encodeURIComponent(currentProjectId)}/workspace`
+    const query = params.toString()
+    return query ? `#${base}?${query}` : `#${base}`
+  }
+
+  if (screen === 'completion' && currentProjectId) {
+    return `#/project/${encodeURIComponent(currentProjectId)}/completion`
+  }
+
+  if (screen === 'new-project') {
+    return '#/new-project'
+  }
+
+  if (screen === 'profile-onboarding') {
+    return '#/profile-onboarding'
+  }
+
+  return '#/dashboard'
+}
+
+function buildNavigationIdentity(screen, currentProjectId) {
+  if ((screen === 'workspace' || screen === 'completion') && currentProjectId) {
+    return `${screen}:${currentProjectId}`
+  }
+
+  if (screen === 'new-project' || screen === 'profile-onboarding') {
+    return screen
+  }
+
+  return 'dashboard'
+}
+
 function App() {
   const {
     user,
@@ -224,6 +336,8 @@ function App() {
 
   const [projects, setProjects] = useState([])
   const [screen, setScreen] = useState('dashboard')
+  const [preAuthScreen, setPreAuthScreen] = useState('landing')
+  const [authInitialMode, setAuthInitialMode] = useState('login')
   const [uiError, setUiError] = useState('')
   const [previewSrcDoc, setPreviewSrcDoc] = useState('')
   const [previewError, setPreviewError] = useState('')
@@ -240,6 +354,9 @@ function App() {
     useState(false)
   const [followUpSuggestionsNotice, setFollowUpSuggestionsNotice] = useState('')
   const [isTaskCardExpanded, setIsTaskCardExpanded] = useState(false)
+  const [hasInitializedSession, setHasInitializedSession] = useState(false)
+  const [isShowingSignupConfigureLoader, setIsShowingSignupConfigureLoader] =
+    useState(false)
   const lastCheckSignatureRef = useRef('')
   const lastCheckResultRef = useRef(null)
   const lastCheckSuggestionsRef = useRef([])
@@ -248,7 +365,13 @@ function App() {
   const fileNoticeTimeoutRef = useRef(null)
   const lastSavedFileContentRef = useRef({})
   const isBackfillingProjectTitlesRef = useRef(false)
+  const hasAttemptedHashRestoreRef = useRef(false)
+  const isHashRestoreInProgressRef = useRef(false)
+  const lastNavigationIdentityRef = useRef('')
+  const hashRestoreNonceRef = useRef(0)
   const importInputRef = useRef(null)
+  const isSignupTransitionPendingRef = useRef(false)
+  const signupConfigureLoaderStartedAtRef = useRef(0)
 
   const showTimedFileNotice = useCallback((message, timeoutMs = 3500) => {
     setFileNotice(message)
@@ -481,37 +604,80 @@ function App() {
   const initializeAuthenticatedUser = useCallback(
     async (userId) => {
       setUiError('')
-      const [, profileResult] = await Promise.all([
-        loadProjects(userId),
-        loadProfile(userId),
-      ])
+      const shouldShowSignupConfigureLoader =
+        isSignupTransitionPendingRef.current || signupConfigureLoaderStartedAtRef.current > 0
 
-      const nextProfile = profileResult?.data ?? null
-      const nextScreen = resolveLandingScreen(
-        nextProfile,
-        profileResult?.error ?? null,
-      )
+      if (shouldShowSignupConfigureLoader) {
+        if (signupConfigureLoaderStartedAtRef.current === 0) {
+          signupConfigureLoaderStartedAtRef.current = Date.now()
+        }
+        setIsShowingSignupConfigureLoader(true)
+      }
 
-      setIsEditingProfile(false)
-      setScreen(nextScreen)
+      try {
+        const [, profileResult] = await Promise.all([
+          loadProjects(userId),
+          loadProfile(userId),
+        ])
+
+        const nextProfile = profileResult?.data ?? null
+        const nextScreen = resolveLandingScreen(
+          nextProfile,
+          profileResult?.error ?? null,
+        )
+
+        if (shouldShowSignupConfigureLoader) {
+          const elapsedMs = Date.now() - signupConfigureLoaderStartedAtRef.current
+          const remainingMs = SIGNUP_CONFIGURE_MIN_DURATION_MS - elapsedMs
+
+          if (remainingMs > 0) {
+            await new Promise((resolve) => {
+              window.setTimeout(resolve, remainingMs)
+            })
+          }
+        }
+
+        setIsEditingProfile(false)
+        setScreen(nextScreen)
+      } finally {
+        isSignupTransitionPendingRef.current = false
+        signupConfigureLoaderStartedAtRef.current = 0
+        setHasInitializedSession(true)
+        setIsShowingSignupConfigureLoader(false)
+      }
     },
     [loadProfile, loadProjects, resolveLandingScreen],
   )
 
   useEffect(() => {
     if (!user) {
+      isSignupTransitionPendingRef.current = false
+      signupConfigureLoaderStartedAtRef.current = 0
+      setIsShowingSignupConfigureLoader(false)
+      setHasInitializedSession(false)
       setProjects([])
       setProfile(null)
       setScreen('dashboard')
+      setPreAuthScreen('landing')
+      setAuthInitialMode('login')
       setIsEditingProfile(false)
       setCurrentProjectTitle('')
       setIsBackfillingProjectTitles(false)
       setProjectTitleStatusMessage('')
       isBackfillingProjectTitlesRef.current = false
+      hasAttemptedHashRestoreRef.current = false
+      isHashRestoreInProgressRef.current = false
+      lastNavigationIdentityRef.current = ''
+      hashRestoreNonceRef.current = 0
       resetApp()
       return
     }
 
+    setHasInitializedSession(false)
+    hasAttemptedHashRestoreRef.current = false
+    isHashRestoreInProgressRef.current = false
+    lastNavigationIdentityRef.current = ''
+    hashRestoreNonceRef.current = 0
     initializeAuthenticatedUser(user.id)
   }, [initializeAuthenticatedUser, resetApp, setProfile, user])
 
@@ -546,6 +712,7 @@ function App() {
       description,
       fallbackCode = '',
       preferredRuntimeLanguage = '',
+      preferredActiveFilePath = '',
     }) => {
       const defaultFiles = createDefaultProjectFiles(
         description,
@@ -553,6 +720,14 @@ function App() {
         preferredRuntimeLanguage,
       )
       setFileError('')
+      const resolvePreferredFileId = (files) => {
+        if (!preferredActiveFilePath) {
+          return null
+        }
+
+        const matchedFile = (files || []).find((file) => file.path === preferredActiveFilePath)
+        return matchedFile?.id || null
+      }
 
       try {
         const { data: filesData, error: filesError } = await getProjectFiles(projectId)
@@ -562,19 +737,22 @@ function App() {
             setFileError(
               'Project file storage is not configured in Supabase yet. Run the SQL setup block for project_files.',
             )
-            syncWorkspaceFiles(defaultFiles)
+            syncWorkspaceFiles(defaultFiles, resolvePreferredFileId(defaultFiles))
             return
           }
 
           console.error(filesError)
           setFileError(filesError.message || 'Could not load project files.')
-          syncWorkspaceFiles(defaultFiles)
+          syncWorkspaceFiles(defaultFiles, resolvePreferredFileId(defaultFiles))
           return
         }
 
         const normalizedExistingFiles = normalizeProjectFiles(filesData ?? [])
         if (normalizedExistingFiles.length > 0) {
-          syncWorkspaceFiles(normalizedExistingFiles)
+          syncWorkspaceFiles(
+            normalizedExistingFiles,
+            resolvePreferredFileId(normalizedExistingFiles),
+          )
           return
         }
 
@@ -595,15 +773,16 @@ function App() {
             setFileError(createError.message || 'Could not initialize project files.')
           }
 
-          syncWorkspaceFiles(defaultFiles)
+          syncWorkspaceFiles(defaultFiles, resolvePreferredFileId(defaultFiles))
           return
         }
 
-        syncWorkspaceFiles(createdFiles ?? defaultFiles)
+        const nextFiles = createdFiles ?? defaultFiles
+        syncWorkspaceFiles(nextFiles, resolvePreferredFileId(nextFiles))
       } catch (error) {
         console.error(error)
         setFileError(error.message || 'Could not initialize project files.')
-        syncWorkspaceFiles(defaultFiles)
+        syncWorkspaceFiles(defaultFiles, resolvePreferredFileId(defaultFiles))
       }
     },
     [setFileError, syncWorkspaceFiles],
@@ -624,12 +803,29 @@ function App() {
 
   const handleSignUp = useCallback(
     async (email, password, fullName) => {
-      const { error } = await signUp(email, password, fullName)
+      isSignupTransitionPendingRef.current = true
+
+      const { data, error } = await signUp(email, password, fullName)
       if (error) {
+        isSignupTransitionPendingRef.current = false
+        signupConfigureLoaderStartedAtRef.current = 0
+        setIsShowingSignupConfigureLoader(false)
         setUiError(error.message || 'Sign up failed.')
         return
       }
 
+      if (!data?.session?.user) {
+        isSignupTransitionPendingRef.current = false
+        signupConfigureLoaderStartedAtRef.current = 0
+        setIsShowingSignupConfigureLoader(false)
+        setUiError('')
+        return
+      }
+
+      if (signupConfigureLoaderStartedAtRef.current === 0) {
+        signupConfigureLoaderStartedAtRef.current = Date.now()
+      }
+      setIsShowingSignupConfigureLoader(true)
       setUiError('')
     },
     [signUp],
@@ -652,6 +848,10 @@ function App() {
       return
     }
 
+    hashRestoreNonceRef.current += 1
+    hasAttemptedHashRestoreRef.current = false
+    isHashRestoreInProgressRef.current = false
+    lastNavigationIdentityRef.current = ''
     resetApp()
     setProjects([])
     setProfile(null)
@@ -661,6 +861,8 @@ function App() {
     setProjectTitleStatusMessage('')
     isBackfillingProjectTitlesRef.current = false
     setScreen('dashboard')
+    setPreAuthScreen('landing')
+    setAuthInitialMode('login')
     setUiError('')
     setPreviewSrcDoc('')
     setPreviewError('')
@@ -681,6 +883,9 @@ function App() {
   )
 
   const handleStartNewProject = useCallback(() => {
+    hashRestoreNonceRef.current += 1
+    isHashRestoreInProgressRef.current = false
+    hasAttemptedHashRestoreRef.current = true
     resetApp()
     setUiError('')
     setPreviewSrcDoc('')
@@ -690,6 +895,21 @@ function App() {
     setProjectTitleStatusMessage('')
     setScreen('new-project')
   }, [resetApp])
+
+  const handleOpenAuthScreen = useCallback((mode = 'login') => {
+    const nextMode = mode === 'signup' ? 'signup' : 'login'
+    setAuthInitialMode(nextMode)
+    setPreAuthScreen('auth')
+    setUiError('')
+    setAuthError(null)
+  }, [setAuthError])
+
+  const handleBackToLanding = useCallback(() => {
+    setPreAuthScreen('landing')
+    setAuthInitialMode('login')
+    setUiError('')
+    setAuthError(null)
+  }, [setAuthError])
 
   const handleCompleteProfile = useCallback(
     async (profileInput) => {
@@ -868,7 +1088,21 @@ function App() {
   )
 
   const handleContinueProject = useCallback(
-    async (project) => {
+    async (project, options = {}) => {
+      const preferredTaskIndex =
+        Number.isInteger(options?.preferredTaskIndex) && options.preferredTaskIndex >= 0
+          ? options.preferredTaskIndex
+          : null
+      const preferredActiveFilePath = toText(options?.preferredActiveFilePath).trim()
+      const shouldAbort =
+        typeof options?.shouldAbort === 'function' ? options.shouldAbort : () => false
+      const ownerId = appUser?.id || user?.id
+
+      if (!ownerId) {
+        setUiError('You must be logged in to continue a project.')
+        return
+      }
+
       setUiError('')
       setIsLoadingProjects(true)
 
@@ -883,22 +1117,37 @@ function App() {
         const normalizedTasks = (data ?? []).map(normalizeTask)
         const firstIncomplete = normalizedTasks.findIndex((task) => !task.completed)
         const resolvedProjectTitle = getProjectDisplayTitle(project)
+        const fallbackTaskIndex = firstIncomplete === -1 ? 0 : firstIncomplete
+        const nextTaskIndex =
+          preferredTaskIndex !== null && preferredTaskIndex < normalizedTasks.length
+            ? preferredTaskIndex
+            : fallbackTaskIndex
+
+        if (shouldAbort()) {
+          return
+        }
+
+        await bootstrapProjectFiles({
+          projectId: project.id,
+          ownerId,
+          description: project.description,
+          fallbackCode: '',
+          preferredActiveFilePath,
+        })
+
+        if (shouldAbort()) {
+          return
+        }
 
         setCurrentProjectId(project.id)
         setCurrentProjectTitle(resolvedProjectTitle)
         setProjectDescription(project.description)
         setSkillLevel(normalizeProjectSkillLevel(project.skill_level))
         setTasks(normalizedTasks)
-        setCurrentTaskIndex(firstIncomplete === -1 ? 0 : firstIncomplete)
+        setCurrentTaskIndex(nextTaskIndex)
         resetTaskSupportState()
         setPreviewSrcDoc('')
         setPreviewError('')
-        await bootstrapProjectFiles({
-          projectId: project.id,
-          ownerId: appUser.id,
-          description: project.description,
-          fallbackCode: '',
-        })
 
         if (firstIncomplete === -1 && normalizedTasks.length > 0) {
           setScreen('completion')
@@ -928,8 +1177,75 @@ function App() {
       setProjectDescription,
       setSkillLevel,
       setTasks,
+      user,
     ],
   )
+
+  useEffect(() => {
+    if (!appUser?.id || !hasInitializedSession) {
+      return
+    }
+
+    if (hasAttemptedHashRestoreRef.current || isHashRestoreInProgressRef.current) {
+      return
+    }
+
+    if (screen === 'profile-onboarding') {
+      hasAttemptedHashRestoreRef.current = true
+      return
+    }
+
+    const hashState = parseHashWorkspaceState()
+
+    if (
+      hashState.screen === 'new-project' &&
+      screen === 'dashboard' &&
+      tasks.length === 0 &&
+      !currentProjectId
+    ) {
+      hasAttemptedHashRestoreRef.current = true
+      setScreen('new-project')
+      return
+    }
+
+    if (
+      (hashState.screen !== 'workspace' && hashState.screen !== 'completion') ||
+      !hashState.projectId
+    ) {
+      hasAttemptedHashRestoreRef.current = true
+      return
+    }
+
+    const matchingProject = projects.find((project) => project.id === hashState.projectId)
+    if (!matchingProject) {
+      hasAttemptedHashRestoreRef.current = true
+      return
+    }
+
+    const restoreNonce = hashRestoreNonceRef.current + 1
+    hashRestoreNonceRef.current = restoreNonce
+    isHashRestoreInProgressRef.current = true
+    void (async () => {
+      try {
+        await handleContinueProject(matchingProject, {
+          preferredTaskIndex: hashState.taskIndex,
+          preferredActiveFilePath: hashState.filePath,
+          shouldAbort: () => hashRestoreNonceRef.current !== restoreNonce,
+        })
+      } finally {
+        isHashRestoreInProgressRef.current = false
+        hasAttemptedHashRestoreRef.current = true
+      }
+    })()
+  }, [
+    appUser?.id,
+    currentProjectId,
+    handleContinueProject,
+    hasInitializedSession,
+    projects,
+    screen,
+    tasks.length,
+  ])
 
   const handleDeleteProject = useCallback(
     async (project) => {
@@ -1453,6 +1769,50 @@ function App() {
       })),
     [projectFiles],
   )
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !appUser?.id || !hasInitializedSession) {
+      return
+    }
+
+    if (!hasAttemptedHashRestoreRef.current) {
+      return
+    }
+
+    const nextHash = buildHashFromWorkspaceState({
+      screen,
+      currentProjectId,
+      currentTaskIndex,
+      activeFilePath: activeFile?.path || '',
+    })
+    const nextIdentity = buildNavigationIdentity(screen, currentProjectId)
+
+    if (window.location.hash === nextHash) {
+      lastNavigationIdentityRef.current = nextIdentity
+      return
+    }
+
+    const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`
+    const shouldPushHistoryEntry =
+      lastNavigationIdentityRef.current !== '' &&
+      lastNavigationIdentityRef.current !== nextIdentity
+
+    if (shouldPushHistoryEntry) {
+      window.history.pushState(window.history.state, '', nextUrl)
+    } else {
+      window.history.replaceState(window.history.state, '', nextUrl)
+    }
+
+    lastNavigationIdentityRef.current = nextIdentity
+  }, [
+    activeFile?.path,
+    appUser?.id,
+    currentProjectId,
+    currentTaskIndex,
+    hasInitializedSession,
+    screen,
+  ])
+
   const showHtmlPreview = runtimeLanguage === 'html'
 
   const completedCount = useMemo(
@@ -1829,6 +2189,9 @@ function App() {
   ])
 
   const handleBackToDashboard = useCallback(async () => {
+    hashRestoreNonceRef.current += 1
+    isHashRestoreInProgressRef.current = false
+    hasAttemptedHashRestoreRef.current = true
     resetApp()
     setIsEditingProfile(false)
     setCurrentProjectTitle('')
@@ -1914,6 +2277,72 @@ function App() {
     tasks,
   ])
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || !appUser?.id || !hasAttemptedHashRestoreRef.current) {
+      return
+    }
+
+    const handleBrowserNavigation = () => {
+      const hashState = parseHashWorkspaceState()
+
+      if (hashState.screen === 'dashboard') {
+        if (screen !== 'dashboard' || tasks.length > 0 || currentProjectId) {
+          void handleBackToDashboard()
+        }
+        return
+      }
+
+      if (hashState.screen === 'new-project') {
+        if (screen !== 'new-project' || tasks.length > 0 || currentProjectId) {
+          handleStartNewProject()
+        }
+        return
+      }
+
+      if (
+        (hashState.screen !== 'workspace' && hashState.screen !== 'completion') ||
+        !hashState.projectId
+      ) {
+        return
+      }
+
+      const isSameProjectScreen =
+        currentProjectId === hashState.projectId &&
+        (screen === 'workspace' || screen === 'completion')
+
+      if (isSameProjectScreen) {
+        return
+      }
+
+      const matchingProject = projects.find((project) => project.id === hashState.projectId)
+      if (!matchingProject) {
+        return
+      }
+
+      void handleContinueProject(matchingProject, {
+        preferredTaskIndex: hashState.taskIndex,
+        preferredActiveFilePath: hashState.filePath,
+      })
+    }
+
+    window.addEventListener('popstate', handleBrowserNavigation)
+    window.addEventListener('hashchange', handleBrowserNavigation)
+
+    return () => {
+      window.removeEventListener('popstate', handleBrowserNavigation)
+      window.removeEventListener('hashchange', handleBrowserNavigation)
+    }
+  }, [
+    appUser?.id,
+    currentProjectId,
+    handleBackToDashboard,
+    handleContinueProject,
+    handleStartNewProject,
+    projects,
+    screen,
+    tasks.length,
+  ])
+
   let markAsCompleteLabel = 'Mark as Complete'
   if (isCheckingBeforeComplete) {
     markAsCompleteLabel = 'Checking before completion...'
@@ -1923,17 +2352,27 @@ function App() {
     markAsCompleteLabel = 'Undo Complete'
   }
 
+  if (isShowingSignupConfigureLoader) {
+    return <ConfigureDojoLoadingScreen />
+  }
+
   if (isAuthenticatingState) {
     return <p className="p-4">Loading auth state...</p>
   }
 
   if (!appUser) {
+    if (preAuthScreen === 'landing') {
+      return <LandingPage onGetStarted={() => handleOpenAuthScreen('signup')} />
+    }
+
     return (
       <AuthScreen
         onSignIn={handleSignIn}
         onSignUp={handleSignUp}
         onContinueWithGoogle={handleContinueWithGoogle}
         onResendConfirmation={handleResendConfirmation}
+        initialMode={authInitialMode}
+        onBackToLanding={handleBackToLanding}
         isAuthenticating={isAuthenticating}
         authError={authError || uiError}
         authInfo={authInfo}

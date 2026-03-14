@@ -14,7 +14,7 @@ function Editor({
   const editorLanguage = language || detectLanguage(projectDescription, value)
 
   return (
-    <section className="h-full overflow-hidden border border-slate-300 bg-white">
+    <section className="shrink-0 overflow-hidden border border-slate-300 bg-white">
       {tabs.length > 0 ? (
         <div className="flex overflow-auto border-b border-slate-300 bg-slate-100">
           {tabs.map((tab) => (

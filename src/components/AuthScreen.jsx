@@ -6,11 +6,13 @@ function AuthScreen({
   onSignUp,
   onContinueWithGoogle,
   onResendConfirmation,
+  initialMode = 'login',
+  onBackToLanding = null,
   isAuthenticating,
   authError,
   authInfo,
 }) {
-  const [mode, setMode] = useState('login')
+  const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
@@ -59,6 +61,18 @@ function AuthScreen({
           <div className="flex items-center justify-center bg-white px-4 py-8 sm:px-6 lg:h-full lg:px-10">
             <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
               <header className="text-center">
+                {onBackToLanding ? (
+                  <div className="mb-4 text-left">
+                    <button
+                      type="button"
+                      className="text-sm font-medium text-slate-600 underline decoration-slate-300 underline-offset-4 transition hover:text-slate-900"
+                      onClick={onBackToLanding}
+                      disabled={isAuthenticating}
+                    >
+                      Back to home
+                    </button>
+                  </div>
+                ) : null}
                 <h2 className="text-3xl font-bold text-slate-900">
                   {isLoginMode ? 'Welcome Back' : 'Create Account'}
                 </h2>
