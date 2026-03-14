@@ -19,10 +19,18 @@ test('getStarterTemplate returns empty string for unknown card id', () => {
   assert.equal(getStarterTemplate('missing-card'), '')
 })
 
-test('deriveWelcomeName prefers username metadata then email prefix then Builder', () => {
+test('deriveWelcomeName prefers full_name metadata then email prefix then Builder', () => {
   assert.equal(
-    deriveWelcomeName({ user_metadata: { username: 'Morayya' }, email: 'user@example.com' }),
-    'Morayya',
+    deriveWelcomeName({ user_metadata: { full_name: 'Morayya Jain' }, email: 'user@example.com' }),
+    'Morayya Jain',
+  )
+  assert.equal(
+    deriveWelcomeName({ user_metadata: { name: 'Google User' }, email: 'user@example.com' }),
+    'Google User',
+  )
+  assert.equal(
+    deriveWelcomeName({ user_metadata: { username: 'LegacyName' }, email: 'user@example.com' }),
+    'LegacyName',
   )
   assert.equal(
     deriveWelcomeName({ user_metadata: {}, email: 'builder@example.com' }),
@@ -34,7 +42,9 @@ test('deriveWelcomeName prefers username metadata then email prefix then Builder
 
 test('deriveSkillBadge maps expertise levels to badge labels', () => {
   assert.equal(deriveSkillBadge({ expertiseLevel: 'beginner' }), 'Beginner')
-  assert.equal(deriveSkillBadge({ expertise_level: 'exploring' }), 'Beginner')
+  assert.equal(deriveSkillBadge({ expertiseLevel: 'intermediate' }), 'Intermediate')
+  assert.equal(deriveSkillBadge({ expertiseLevel: 'advanced' }), 'Advanced')
+  assert.equal(deriveSkillBadge({ expertise_level: 'exploring' }), 'Intermediate')
   assert.equal(deriveSkillBadge({ expertiseLevel: 'student' }), 'Intermediate')
   assert.equal(deriveSkillBadge({ expertiseLevel: 'master' }), 'Advanced')
   assert.equal(deriveSkillBadge({ expertiseLevel: 'unknown' }), 'Beginner')

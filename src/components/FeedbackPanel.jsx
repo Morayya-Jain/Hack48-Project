@@ -38,16 +38,23 @@ function FeedbackPanel({
 
       <div className="min-h-[320px] max-h-[420px] overflow-auto rounded-xl border border-slate-300 bg-slate-50 p-3">
         {feedbackHistory.length === 0 ? (
-          <p className="text-slate-500">No feedback yet.</p>
+          <p className="text-sm leading-6 text-slate-500">No feedback yet.</p>
         ) : (
           <div className="flex flex-col gap-3">
             {feedbackHistory.map((entry, index) => (
-              <div key={`${entry.role}-${index}`} className="flex flex-col gap-1">
-                <strong className="text-sm text-slate-700">{entry.role === 'ai' ? 'Mentor' : 'You'}:</strong>
+              <div
+                key={`${entry.role}-${index}`}
+                className="rounded-lg border border-slate-200 bg-white p-3"
+              >
+                <strong className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {entry.role === 'ai' ? 'Mentor' : 'You'}
+                </strong>
                 {entry.role === 'ai' ? (
-                  <RichTextMessage text={entry.message} />
+                  <RichTextMessage text={entry.message} className="mt-1" />
                 ) : (
-                  <p className="whitespace-pre-wrap break-words text-sm">{entry.message}</p>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">
+                    {entry.message}
+                  </p>
                 )}
               </div>
             ))}

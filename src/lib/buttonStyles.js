@@ -1,8 +1,8 @@
 const buttonBase =
-  'inline-flex cursor-pointer items-center justify-center rounded-md border font-medium transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none'
+  'inline-flex cursor-pointer items-center justify-center rounded-md border font-medium transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none'
 
 const buttonPrimary =
-  `${buttonBase} border-sky-700 bg-sky-600 text-white shadow-sm hover:border-sky-600 hover:bg-sky-500 active:translate-y-px`
+  `${buttonBase} border-emerald-700 bg-emerald-600 text-white shadow-sm hover:border-emerald-600 hover:bg-emerald-500 active:translate-y-px`
 
 const buttonSecondary =
   `${buttonBase} border-slate-300 bg-white text-slate-900 shadow-sm hover:border-slate-400 hover:bg-slate-50 active:translate-y-px`

@@ -23,7 +23,7 @@ const OPTION_DESCRIPTIONS = {
   healthtech: 'Improving health outcomes through thoughtful software design.',
 }
 
-function OptionIcon({ value, className = 'h-9 w-9 text-slate-700' }) {
+function OptionIcon({ value, className = 'h-9 w-9 text-green-700' }) {
   const iconClass = className
 
   if (value === 'beginner') {
@@ -41,7 +41,7 @@ function OptionIcon({ value, className = 'h-9 w-9 text-slate-700' }) {
     )
   }
 
-  if (value === 'exploring') {
+  if (value === 'intermediate') {
     return (
       <svg viewBox="0 0 48 48" fill="none" className={iconClass} aria-hidden="true">
         <path d="M10 34h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -57,16 +57,7 @@ function OptionIcon({ value, className = 'h-9 w-9 text-slate-700' }) {
     )
   }
 
-  if (value === 'student') {
-    return (
-      <svg viewBox="0 0 48 48" fill="none" className={iconClass} aria-hidden="true">
-        <path d="m7 19 17-8 17 8-17 8-17-8Z" stroke="currentColor" strokeWidth="2" />
-        <path d="M14 22v8c0 2 4.8 5 10 5s10-3 10-5v-8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      </svg>
-    )
-  }
-
-  if (value === 'master') {
+  if (value === 'advanced') {
     return (
       <svg viewBox="0 0 48 48" fill="none" className={iconClass} aria-hidden="true">
         <path d="M14 10v7c0 5.5 4.5 10 10 10s10-4.5 10-10v-7" stroke="currentColor" strokeWidth="2" />
@@ -173,7 +164,7 @@ function OptionCard({ option, selected, onClick, compact = false }) {
       className={`flex w-full flex-col items-center justify-start rounded-2xl border bg-white px-4 py-6 text-center transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-100 ${
         selected
           ? 'border-green-500 bg-green-50/70 text-slate-900 shadow-sm'
-          : 'border-slate-200 text-slate-900 hover:border-slate-300'
+          : 'border-slate-200 text-slate-900 hover:border-green-300 hover:bg-green-50/30'
       }`}
       aria-pressed={selected}
     >
@@ -181,7 +172,7 @@ function OptionCard({ option, selected, onClick, compact = false }) {
         className={`flex h-12 w-12 items-center justify-center rounded-xl border ${
           selected
             ? 'border-green-200 bg-green-100 text-green-700'
-            : 'border-slate-200 bg-slate-50 text-slate-700'
+            : 'border-green-100 bg-green-50 text-green-700'
         }`}
       >
         <OptionIcon value={option.value} />
@@ -339,9 +330,9 @@ function ProfileOnboarding({
   const primaryButtonClass =
     'inline-flex h-12 items-center justify-center rounded-xl border border-green-700 bg-green-600 px-5 text-sm font-semibold text-white transition hover:border-green-600 hover:bg-green-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-100 disabled:cursor-not-allowed disabled:border-slate-400 disabled:bg-slate-400'
   const secondaryButtonClass =
-    'inline-flex h-12 items-center justify-center rounded-xl border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-900 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-100 disabled:cursor-not-allowed disabled:opacity-60'
+    'inline-flex h-12 items-center justify-center rounded-xl border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-900 transition hover:border-green-300 hover:bg-green-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-100 disabled:cursor-not-allowed disabled:opacity-60'
   const subtleButtonClass =
-    'inline-flex h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-100 disabled:cursor-not-allowed disabled:opacity-60'
+    'inline-flex h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 transition hover:border-green-300 hover:bg-green-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-100 disabled:cursor-not-allowed disabled:opacity-60'
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-8 sm:px-6 sm:py-10">

@@ -24,6 +24,7 @@ import {
 import {
   createProject,
   createProjectFiles,
+  deleteProject as deleteProjectInDb,
   deleteProjectFile,
   getUserProfile,
   markProjectIncomplete,
@@ -54,6 +55,10 @@ import {
   sanitizeFilePath,
   toPersistedFiles,
 } from './lib/projectFiles'
+import {
+  nextFollowUpReplyCount,
+  shouldResetFollowUpThread,
+} from './lib/followUpGuardrail'
 import { prettyLanguageName, sanitizeLanguage } from './lib/runtimeUtils'
 
 function toText(value) {
@@ -100,16 +105,11 @@ function normalizeProjectSkillLevel(value) {
 
 function normalizeSelectedSkillLevel(value) {
   const normalized = toText(value).trim().toLowerCase()
-  if (
-    normalized === 'none' ||
-    normalized === 'beginner' ||
-    normalized === 'intermediate' ||
-    normalized === 'advanced'
-  ) {
+  if (normalized === 'beginner' || normalized === 'intermediate' || normalized === 'advanced') {
     return normalized
   }
 
-  return 'none'
+  return ''
 }
 
 function isProjectFilesTableMissing(error) {
@@ -206,6 +206,8 @@ function App() {
   const [isCheckingBeforeComplete, setIsCheckingBeforeComplete] = useState(false)
   const [isMarkingTaskComplete, setIsMarkingTaskComplete] = useState(false)
   const [isEditingProfile, setIsEditingProfile] = useState(false)
+  const [deletingProjectId, setDeletingProjectId] = useState(null)
+  const [followUpReplyCount, setFollowUpReplyCount] = useState(0)
   const lastCheckSignatureRef = useRef('')
   const lastCheckResultRef = useRef(null)
   const saveTimeoutRef = useRef(null)
@@ -229,6 +231,11 @@ function App() {
     },
     [],
   )
+
+  const resetTaskSupportContext = useCallback(() => {
+    resetTaskSupportState()
+    setFollowUpReplyCount(0)
+  }, [resetTaskSupportState])
 
   const showFileLanguageNotice = useCallback((path, language) => {
     const normalizedLanguage = sanitizeLanguage(language)
@@ -475,8 +482,8 @@ function App() {
   )
 
   const handleSignUp = useCallback(
-    async (email, password, username) => {
-      const { error } = await signUp(email, password, username)
+    async (email, password, fullName) => {
+      const { error } = await signUp(email, password, fullName)
       if (error) {
         setUiError(error.message || 'Sign up failed.')
         return
@@ -512,6 +519,7 @@ function App() {
     setUiError('')
     setPreviewSrcDoc('')
     setPreviewError('')
+    setFollowUpReplyCount(0)
     setAuthError(null)
   }, [resetApp, setAuthError, setProfile, signOut])
 
@@ -535,6 +543,7 @@ function App() {
     setPreviewError('')
     setIsEditingProfile(false)
     setScreen('new-project')
+    setFollowUpReplyCount(0)
   }, [resetApp])
 
   const handleCompleteProfile = useCallback(
@@ -620,8 +629,7 @@ function App() {
         const selectedSkillLevel = normalizeSelectedSkillLevel(
           clarifyingAnswers?.skillLevelPreference,
         )
-        const effectiveSkillLevel =
-          selectedSkillLevel === 'none' ? inferredSkillLevel : selectedSkillLevel
+        const effectiveSkillLevel = selectedSkillLevel || inferredSkillLevel
 
         setSkillLevel(effectiveSkillLevel)
 
@@ -654,7 +662,7 @@ function App() {
         setCurrentProjectId(projectData.id)
         setTasks(normalizedTasks)
         setCurrentTaskIndex(0)
-        resetTaskSupportState()
+        resetTaskSupportContext()
         setPreviewSrcDoc('')
         setPreviewError('')
         await bootstrapProjectFiles({
@@ -678,7 +686,7 @@ function App() {
       bootstrapProjectFiles,
       loadProjects,
       profile,
-      resetTaskSupportState,
+      resetTaskSupportContext,
       setCurrentProjectId,
       setCurrentTaskIndex,
       setIsGeneratingRoadmap,
@@ -710,7 +718,7 @@ function App() {
         setSkillLevel(normalizeProjectSkillLevel(project.skill_level))
         setTasks(normalizedTasks)
         setCurrentTaskIndex(firstIncomplete === -1 ? 0 : firstIncomplete)
-        resetTaskSupportState()
+        resetTaskSupportContext()
         setPreviewSrcDoc('')
         setPreviewError('')
         await bootstrapProjectFiles({
@@ -733,7 +741,7 @@ function App() {
       }
     },
     [
-      resetTaskSupportState,
+      resetTaskSupportContext,
       appUser,
       bootstrapProjectFiles,
       setCurrentProjectId,
@@ -743,6 +751,58 @@ function App() {
       setSkillLevel,
       setTasks,
     ],
+  )
+
+  const handleDeleteProject = useCallback(
+    async (project) => {
+      if (!project?.id) {
+        setUiError('Could not identify which project to delete.')
+        return
+      }
+
+      if (!user) {
+        setUiError('You must be logged in to delete a project.')
+        return
+      }
+
+      const isConfirmed =
+        typeof window === 'undefined'
+          ? true
+          : window.confirm(
+              'Delete this project permanently? This will remove its roadmap and files, and cannot be undone.',
+            )
+
+      if (!isConfirmed) {
+        return
+      }
+
+      setUiError('')
+      setDeletingProjectId(project.id)
+
+      try {
+        const { error } = await deleteProjectInDb(project.id, user.id)
+        if (error) {
+          console.error(error)
+          setUiError(error.message || 'Could not delete project.')
+          return
+        }
+
+        setProjects((prev) => prev.filter((item) => item.id !== project.id))
+
+        if (currentProjectId === project.id) {
+          resetApp()
+          setScreen('dashboard')
+        }
+
+        await loadProjects(user.id)
+      } catch (error) {
+        console.error(error)
+        setUiError(error.message || 'Could not delete project.')
+      } finally {
+        setDeletingProjectId(null)
+      }
+    },
+    [currentProjectId, loadProjects, resetApp, user],
   )
 
   const activeFile = useMemo(() => {
@@ -770,7 +830,7 @@ function App() {
   }, [activeFile, projectFiles, setActiveFileId, updateUserCode])
 
   const persistProjectFile = useCallback(
-    async (fileToSave) => {
+    async (fileToSave, { showSavingState = true } = {}) => {
       if (!currentProjectId || !appUser) {
         return
       }
@@ -780,7 +840,9 @@ function App() {
         return
       }
 
-      setIsSavingFiles(true)
+      if (showSavingState) {
+        setIsSavingFiles(true)
+      }
       setFileError('')
 
       try {
@@ -825,7 +887,9 @@ function App() {
         console.error(error)
         setFileError(error.message || 'Could not save file.')
       } finally {
-        setIsSavingFiles(false)
+        if (showSavingState) {
+          setIsSavingFiles(false)
+        }
       }
     },
     [
@@ -854,7 +918,7 @@ function App() {
     }
 
     saveTimeoutRef.current = window.setTimeout(() => {
-      persistProjectFile(activeFile)
+      persistProjectFile(activeFile, { showSavingState: false })
     }, 700)
 
     return () => {
@@ -1207,9 +1271,9 @@ function App() {
   const handleSelectTask = useCallback(
     (taskIndex) => {
       setCurrentTaskIndex(taskIndex)
-      resetTaskSupportState()
+      resetTaskSupportContext()
     },
-    [resetTaskSupportState, setCurrentTaskIndex],
+    [resetTaskSupportContext, setCurrentTaskIndex],
   )
 
   const runCodeCheck = useCallback(async ({ useCached = true } = {}) => {
@@ -1226,6 +1290,7 @@ function App() {
     ) {
       setUiError('')
       setFeedbackHistory([{ role: 'ai', message: lastCheckResultRef.current.feedback }])
+      setFollowUpReplyCount(0)
       return { data: lastCheckResultRef.current, error: null }
     }
 
@@ -1238,6 +1303,7 @@ function App() {
         currentTask,
         userCode,
         profileToPromptContext(profile),
+        skillLevel,
       )
       if (result.error) {
         setUiError(result.error.message)
@@ -1247,6 +1313,7 @@ function App() {
       lastCheckSignatureRef.current = checkSignature
       lastCheckResultRef.current = result.data
       setFeedbackHistory([{ role: 'ai', message: result.data.feedback }])
+      setFollowUpReplyCount(0)
       return { data: result.data, error: null }
     } catch (error) {
       console.error(error)
@@ -1262,6 +1329,7 @@ function App() {
     profile,
     setFeedbackHistory,
     setIsCheckingCode,
+    skillLevel,
     userCode,
   ])
 
@@ -1282,9 +1350,16 @@ function App() {
 
       setUiError('')
       setIsAskingFollowUp(true)
+      const shouldResetThread = shouldResetFollowUpThread(followUpReplyCount)
+      const historyBeforeQuestion = shouldResetThread ? [] : feedbackHistory
+
+      if (shouldResetThread) {
+        setFeedbackHistory([])
+        setFollowUpReplyCount(0)
+      }
 
       const updatedHistory = [
-        ...feedbackHistory,
+        ...historyBeforeQuestion,
         { role: 'user', message: normalizedQuestion },
       ]
 
@@ -1304,6 +1379,10 @@ function App() {
         }
 
         setFeedbackHistory([...updatedHistory, { role: 'ai', message: result.data }])
+        setFollowUpReplyCount(nextFollowUpReplyCount(
+          shouldResetThread ? 0 : followUpReplyCount,
+          true,
+        ))
       } catch (error) {
         console.error(error)
         setUiError(error.message || 'Follow-up request failed.')
@@ -1315,6 +1394,7 @@ function App() {
       askFollowUp,
       currentTask,
       feedbackHistory,
+      followUpReplyCount,
       profile,
       skillLevel,
       setFeedbackHistory,
@@ -1429,7 +1509,7 @@ function App() {
       }
 
       setCurrentTaskIndex(nextTaskIndex)
-      resetTaskSupportState()
+      resetTaskSupportContext()
     } catch (error) {
       console.error(error)
       setUiError(error.message || 'Could not complete task.')
@@ -1444,7 +1524,7 @@ function App() {
     loadProjects,
     markTaskComplete,
     markTaskIncomplete,
-    resetTaskSupportState,
+    resetTaskSupportContext,
     runCodeCheck,
     setCurrentTaskIndex,
     setFeedbackHistory,
@@ -1460,6 +1540,7 @@ function App() {
     setUiError('')
     setPreviewSrcDoc('')
     setPreviewError('')
+    setFollowUpReplyCount(0)
 
     if (user) {
       await loadProjects(user.id)
@@ -1519,7 +1600,7 @@ function App() {
       }
 
       setCurrentTaskIndex(reopenTaskIndex)
-      resetTaskSupportState()
+      resetTaskSupportContext()
       setScreen('workspace')
     } catch (error) {
       console.error(error)
@@ -1532,7 +1613,7 @@ function App() {
     isMarkingTaskComplete,
     markTaskComplete,
     markTaskIncomplete,
-    resetTaskSupportState,
+    resetTaskSupportContext,
     setCurrentTaskIndex,
     tasks,
   ])
@@ -1582,9 +1663,11 @@ function App() {
       <Dashboard
         projects={projects}
         isLoadingProjects={isLoadingProjects}
+        deletingProjectId={deletingProjectId}
         onStartNewProject={handleStartNewProject}
         onEditProfile={handleEditProfile}
         onContinueProject={handleContinueProject}
+        onDeleteProject={handleDeleteProject}
         onLogOut={handleLogOut}
         errorMessage={uiError}
       />
@@ -1597,7 +1680,9 @@ function App() {
         onSubmit={handleGenerateRoadmap}
         projects={projects}
         isLoadingProjects={isLoadingProjects}
+        deletingProjectId={deletingProjectId}
         onContinueProject={handleContinueProject}
+        onDeleteProject={handleDeleteProject}
         onLogOut={handleLogOut}
         onBackToDashboard={handleBackToDashboard}
         onEditProfile={handleEditProfile}
@@ -1700,7 +1785,7 @@ function App() {
           {isAskingFollowUp && <p>Getting mentor reply...</p>}
           {isSavingFiles && <p>Saving project files...</p>}
           {fileError && <p className="text-red-600">{fileError}</p>}
-          {fileNotice && <p className="text-sky-700">{fileNotice}</p>}
+          {fileNotice && <p className="text-emerald-700">{fileNotice}</p>}
         </section>
       ) : null}
 

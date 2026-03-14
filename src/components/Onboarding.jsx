@@ -8,9 +8,8 @@ import {
 
 const SKILL_LEVEL_CHIPS = [
   { id: 'beginner', label: 'Beginner', value: 'beginner' },
-  { id: 'explorer', label: 'Explorer', value: 'intermediate' },
-  { id: 'student', label: 'Student', value: 'intermediate' },
-  { id: 'master', label: 'Master', value: 'advanced' },
+  { id: 'intermediate', label: 'Intermediate', value: 'intermediate' },
+  { id: 'advanced', label: 'Advanced', value: 'advanced' },
 ]
 
 function mapSkillChipToPreference(chipId) {
@@ -127,7 +126,9 @@ function Onboarding({
   onSubmit,
   projects = [],
   isLoadingProjects = false,
+  deletingProjectId = null,
   onContinueProject = () => {},
+  onDeleteProject = () => {},
   onLogOut = () => {},
   onBackToDashboard = null,
   onEditProfile = () => {},
@@ -147,6 +148,7 @@ function Onboarding({
 
   const welcomeName = useMemo(() => deriveWelcomeName(user), [user])
   const trimmedDescription = description.trim()
+  const isDeletingProject = Boolean(deletingProjectId)
 
   useEffect(() => {
     const input = descriptionInputRef.current
@@ -226,28 +228,28 @@ function Onboarding({
 
           <div className="flex flex-wrap gap-2 md:gap-3">
             {onBackToDashboard ? (
-              <button
-                type="button"
-                className={actionButtonClass}
-                onClick={onBackToDashboard}
-                disabled={isGeneratingRoadmap}
-              >
-                Dashboard
-              </button>
-            ) : null}
             <button
               type="button"
               className={actionButtonClass}
-              onClick={onEditProfile}
-              disabled={isGeneratingRoadmap}
+              onClick={onBackToDashboard}
+              disabled={isGeneratingRoadmap || isDeletingProject}
             >
-              Edit profile
+              Dashboard
             </button>
+          ) : null}
+          <button
+            type="button"
+            className={actionButtonClass}
+            onClick={onEditProfile}
+            disabled={isGeneratingRoadmap || isDeletingProject}
+          >
+            Edit profile
+          </button>
             <button
               type="button"
               className={logoutButtonClass}
               onClick={onLogOut}
-              disabled={isGeneratingRoadmap}
+              disabled={isGeneratingRoadmap || isDeletingProject}
             >
               Log out
             </button>
@@ -265,24 +267,35 @@ function Onboarding({
             <div className="mt-3 flex flex-col gap-2">
               {isLoadingProjects ? (
                 <p className="px-2 text-sm text-slate-600">Loading projects...</p>
+              ) : isDeletingProject ? (
+                <p className="px-2 text-sm text-slate-600">Deleting project...</p>
               ) : projects.length === 0 ? (
                 <p className="px-2 text-sm text-slate-600">No projects yet. Start one below.</p>
               ) : (
                 projects.map((project, index) => (
-                  <button
-                    key={project.id}
-                    type="button"
-                    className="flex h-11 items-center justify-start gap-2 rounded-xl border border-transparent px-3 text-left text-sm font-semibold text-slate-800 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={() => onContinueProject(project)}
-                    disabled={isGeneratingRoadmap}
-                    title={project.description}
-                  >
-                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-slate-500">
-                      <ProjectListIcon index={index} />
-                    </span>
-                    <span className="truncate">{projectPreview(project)}</span>
-                    <span className="shrink-0 text-slate-500">›</span>
-                  </button>
+                  <div key={project.id} className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="flex h-11 min-w-0 flex-1 items-center justify-start gap-2 rounded-xl border border-transparent px-3 text-left text-sm font-semibold text-slate-800 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => onContinueProject(project)}
+                      disabled={isGeneratingRoadmap || isDeletingProject}
+                      title={project.description}
+                    >
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                        <ProjectListIcon index={index} />
+                      </span>
+                      <span className="truncate">{projectPreview(project)}</span>
+                      <span className="shrink-0 text-slate-500">›</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 items-center justify-center rounded-lg border border-red-300 bg-white px-3 text-xs font-semibold text-red-700 transition hover:border-red-400 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => onDeleteProject(project)}
+                      disabled={isGeneratingRoadmap || isDeletingProject}
+                    >
+                      {deletingProjectId === project.id ? 'Deleting...' : 'Delete'}
+                    </button>
+                  </div>
                 ))
               )}
             </div>
@@ -294,7 +307,7 @@ function Onboarding({
                 type="button"
                 className="inline-flex h-10 items-center gap-2 rounded-xl px-2 text-base font-medium text-slate-800 transition hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={onBackToDashboard}
-                disabled={isGeneratingRoadmap}
+                disabled={isGeneratingRoadmap || isDeletingProject}
               >
                 <span className="text-lg leading-none">›</span>
                 Back to Dashboard

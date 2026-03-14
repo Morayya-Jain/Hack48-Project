@@ -48,9 +48,19 @@ export function getStarterTemplate(starterId) {
 }
 
 export function deriveWelcomeName(user) {
-  const metadataName = toText(user?.user_metadata?.username).trim()
+  const metadataFullName = toText(user?.user_metadata?.full_name).trim()
+  if (metadataFullName) {
+    return metadataFullName
+  }
+
+  const metadataName = toText(user?.user_metadata?.name).trim()
   if (metadataName) {
     return metadataName
+  }
+
+  const legacyUsername = toText(user?.user_metadata?.username).trim()
+  if (legacyUsername) {
+    return legacyUsername
   }
 
   const emailPrefix = toText(user?.email).split('@')[0]?.trim()
@@ -64,11 +74,11 @@ export function deriveWelcomeName(user) {
 export function deriveSkillBadge(profile) {
   const expertise = toText(profile?.expertiseLevel ?? profile?.expertise_level).trim().toLowerCase()
 
-  if (expertise === 'student') {
+  if (expertise === 'intermediate' || expertise === 'exploring' || expertise === 'student') {
     return 'Intermediate'
   }
 
-  if (expertise === 'master') {
+  if (expertise === 'advanced' || expertise === 'master') {
     return 'Advanced'
   }
 

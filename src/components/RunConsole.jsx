@@ -806,7 +806,7 @@ function RunConsole({ code, detectedLanguage, lockedLanguage = '', onRunPreview 
                     : line.type === 'warn'
                       ? 'text-amber-300'
                       : line.type === 'result'
-                        ? 'text-sky-300'
+                        ? 'text-emerald-300'
                         : 'text-slate-100'
                 }
               >

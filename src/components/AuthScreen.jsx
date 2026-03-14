@@ -13,8 +13,14 @@ function AuthScreen({
   const [mode, setMode] = useState('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [username, setUsername] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [resendEligibleEmail, setResendEligibleEmail] = useState('')
   const isLoginMode = mode === 'login'
+  const trimmedEmail = email.trim()
+  const canShowResendConfirmation =
+    !isLoginMode &&
+    Boolean(resendEligibleEmail) &&
+    resendEligibleEmail.toLowerCase() === trimmedEmail.toLowerCase()
 
   const handleSubmit = async (event) => {
     event.preventDefault()
@@ -24,7 +30,8 @@ function AuthScreen({
       return
     }
 
-    await onSignUp(email, password, username)
+    setResendEligibleEmail(trimmedEmail)
+    await onSignUp(email, password, fullName)
   }
 
   const handleResendConfirmation = async () => {
@@ -65,16 +72,17 @@ function AuthScreen({
               <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
                 {!isLoginMode ? (
                   <label className="flex flex-col gap-2 text-sm font-medium text-slate-700">
-                    Username
+                    Full name
                     <input
                       type="text"
-                      value={username}
-                      onChange={(event) => setUsername(event.target.value)}
+                      value={fullName}
+                      onChange={(event) => setFullName(event.target.value)}
+                      autoComplete="name"
                       required
-                    className="h-12 rounded-xl border border-slate-300 px-3 text-base outline-none transition focus:border-green-500 focus:ring-2 focus:ring-green-100"
-                    placeholder="Enter your username"
-                  />
-                </label>
+                      className="h-12 rounded-xl border border-slate-300 px-3 text-base outline-none transition focus:border-green-500 focus:ring-2 focus:ring-green-100"
+                      placeholder="Enter your full name"
+                    />
+                  </label>
                 ) : null}
 
                 <label className="flex flex-col gap-2 text-sm font-medium text-slate-700">
@@ -114,10 +122,10 @@ function AuthScreen({
                       : 'Sign Up'}
                 </button>
 
-                {!isLoginMode ? (
+                {canShowResendConfirmation ? (
                   <button
                     type="button"
-                    disabled={isAuthenticating || !email.trim()}
+                    disabled={isAuthenticating}
                     className="self-center text-sm font-medium text-green-700 underline decoration-green-300 underline-offset-4 transition hover:text-green-800 disabled:cursor-not-allowed disabled:text-slate-400"
                     onClick={handleResendConfirmation}
                   >

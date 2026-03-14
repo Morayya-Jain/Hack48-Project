@@ -9,17 +9,58 @@ import {
 } from '../lib/profile.js'
 import { sanitizeLanguage } from '../lib/runtimeUtils.js'
 
-const GEMINI_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
+const GEMINI_MODEL_FLASH = 'gemini-2.5-flash'
+const GEMINI_MODEL_PRO = 'gemini-2.5-pro'
 const TIMEOUT_MS = 15000
 const GEMINI_API_KEY = import.meta.env?.VITE_GEMINI_API_KEY?.trim()
 const DEFAULT_PROJECT_SKILL_LEVEL = 'intermediate'
 const PROJECT_SKILL_LEVELS = new Set(['beginner', 'intermediate', 'advanced'])
 const DEFAULT_CLARIFYING_ANSWERS = {
-  skillLevelPreference: 'none',
+  skillLevelPreference: 'beginner',
   experience: 'Not specified.',
   scope: 'Start with a simple MVP.',
   time: 'Moderate pace.',
+}
+const STARTER_CONTEXT_KEYWORDS =
+  /(command|terminal|run|create|init|install|folder|file|structure|scaffold|entry|index|main|setup|starter|start|first step)/i
+const STAGE_ONE_STARTER_FALLBACKS = {
+  javascript: {
+    description:
+      'Start by setting up a small project skeleton and confirming your entry file runs. Create your initial files and verify a basic script can execute before adding features.',
+    hint:
+      'In your terminal, initialize the project and create the first files (for example, package config and a main entry file). Run a simple starter command to confirm your setup works.',
+  },
+  typescript: {
+    description:
+      'Start by creating a basic TypeScript project structure with a clear entry point. Confirm your compiler/tooling can run before implementing feature logic.',
+    hint:
+      'Set up TypeScript config and an entry file first, then run a compile or dev command to verify the environment is ready.',
+  },
+  python: {
+    description:
+      'Start with a clean Python project layout and an entry script. Verify your environment can execute the starter file before building any task-specific behavior.',
+    hint:
+      'Create a virtual environment, add a starter script, and run it once from the terminal to confirm your setup.',
+  },
+  html: {
+    description:
+      'Start by creating the base page structure and identifying where each main section of your UI will live. Keep the first pass minimal so you can build incrementally.',
+    hint:
+      'Create an `index.html` with basic document structure and placeholder sections, then open it in the browser to validate your starting layout.',
+  },
+  sql: {
+    description:
+      'Start by defining the core table structure and relationships needed for the smallest working version. Validate schema creation before writing complex queries.',
+    hint:
+      'Write and run your initial `CREATE TABLE` statements for the key entities first, then verify the schema exists before adding inserts or joins.',
+  },
+  default: {
+    description:
+      'Start with a minimal project scaffold and verify your environment works before building features. Focus on the first executable step and basic file structure.',
+    hint:
+      'Use one concrete startup action first (create core files or run initial setup command), then confirm it runs so you can iterate safely.',
+  },
 }
 
 function cleanJsonString(text) {
@@ -55,15 +96,11 @@ function expertiseResponseStyle(expertiseLevel) {
     return 'Explain from first principles in small steps, define basic terms, and avoid assumptions.'
   }
 
-  if (expertiseLevel === 'exploring') {
+  if (expertiseLevel === 'intermediate') {
     return 'Use clear practical guidance with short explanations and one concrete next action.'
   }
 
-  if (expertiseLevel === 'student') {
-    return 'Use structured coaching, reinforce reasoning, and connect concepts to implementation.'
-  }
-
-  if (expertiseLevel === 'master') {
+  if (expertiseLevel === 'advanced') {
     return 'Be concise and technical, focus on tradeoffs, edge cases, and advanced execution detail.'
   }
 
@@ -129,15 +166,94 @@ function normalizeProjectSkillLevel(value) {
   return DEFAULT_PROJECT_SKILL_LEVEL
 }
 
+function normalizeModelSkillLevel(value) {
+  const normalized = toText(value).trim().toLowerCase()
+
+  if (normalized === 'hard' || normalized === 'master') {
+    return 'advanced'
+  }
+
+  if (PROJECT_SKILL_LEVELS.has(normalized)) {
+    return normalized
+  }
+
+  return ''
+}
+
+function selectGeminiModel(skillLevel) {
+  const normalizedSkillLevel = normalizeModelSkillLevel(skillLevel)
+  if (normalizedSkillLevel === 'advanced') {
+    return GEMINI_MODEL_PRO
+  }
+
+  return GEMINI_MODEL_FLASH
+}
+
+function isMissingStarterContext(text) {
+  const normalized = toText(text).trim()
+  if (!normalized) {
+    return true
+  }
+
+  if (normalized.length < 60) {
+    return true
+  }
+
+  return !STARTER_CONTEXT_KEYWORDS.test(normalized)
+}
+
+function getStageOneStarterFallback(language) {
+  const normalizedLanguage = sanitizeLanguage(language)
+  if (normalizedLanguage && STAGE_ONE_STARTER_FALLBACKS[normalizedLanguage]) {
+    return STAGE_ONE_STARTER_FALLBACKS[normalizedLanguage]
+  }
+
+  return STAGE_ONE_STARTER_FALLBACKS.default
+}
+
+function normalizeTaskWithStarterFallback(task, index) {
+  const title = toText(task.title) || `Task ${index + 1}`
+  const description = toText(task.description)
+  const hint = toText(task.hint)
+  const exampleOutput = toText(task.exampleOutput)
+  const lockedLanguage = sanitizeLanguage(task.language)
+
+  if (index !== 0) {
+    return {
+      id: task.id || `ai-task-${index + 1}`,
+      title,
+      description,
+      hint,
+      exampleOutput,
+      language: lockedLanguage,
+      completed: false,
+      task_index: index,
+    }
+  }
+
+  const fallback = getStageOneStarterFallback(lockedLanguage)
+
+  return {
+    id: task.id || `ai-task-${index + 1}`,
+    title,
+    description: isMissingStarterContext(description)
+      ? fallback.description
+      : description,
+    hint: isMissingStarterContext(hint) ? fallback.hint : hint,
+    exampleOutput,
+    language: lockedLanguage,
+    completed: false,
+    task_index: index,
+  }
+}
+
 export function normalizeClarifyingAnswers(clarifyingAnswers) {
   const source =
     clarifyingAnswers && typeof clarifyingAnswers === 'object' ? clarifyingAnswers : {}
   const rawSkillLevelPreference = toText(source.skillLevelPreference).trim().toLowerCase()
   const skillLevelPreference = PROJECT_SKILL_LEVELS.has(rawSkillLevelPreference)
     ? rawSkillLevelPreference
-    : rawSkillLevelPreference === 'none'
-      ? 'none'
-      : DEFAULT_CLARIFYING_ANSWERS.skillLevelPreference
+    : DEFAULT_CLARIFYING_ANSWERS.skillLevelPreference
 
   return {
     skillLevelPreference,
@@ -165,29 +281,16 @@ export function parseRoadmapGenerationResult(text) {
 
   return {
     skillLevel: normalizeProjectSkillLevel(parsed.skillLevel),
-    tasks: parsed.tasks.map((task, index) => {
-      const title = toText(task.title) || `Task ${index + 1}`
-      const description = toText(task.description)
-      const hint = toText(task.hint)
-      const exampleOutput = toText(task.exampleOutput)
-      const lockedLanguage = sanitizeLanguage(task.language)
-
-      return {
-        id: task.id || `ai-task-${index + 1}`,
-        title,
-        description,
-        hint,
-        exampleOutput,
-        language: lockedLanguage,
-        completed: false,
-        task_index: index,
-      }
-    }),
+    tasks: parsed.tasks.map((task, index) => normalizeTaskWithStarterFallback(task, index)),
   }
 }
 
 async function callGemini(prompt, options = {}) {
-  const { temperature = 0.5, maxOutputTokens = 256 } = options
+  const {
+    temperature = 0.5,
+    maxOutputTokens = 256,
+    model = GEMINI_MODEL_FLASH,
+  } = options
 
   if (!GEMINI_API_KEY) {
     return {
@@ -203,7 +306,7 @@ async function callGemini(prompt, options = {}) {
 
   try {
     const response = await fetch(
-      `${GEMINI_URL}?key=${GEMINI_API_KEY}`,
+      `${GEMINI_BASE_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -258,11 +361,11 @@ async function callGemini(prompt, options = {}) {
   }
 }
 
-export function useGemini() {
-  const generateRoadmap = useCallback(async (projectDescription, clarifyingAnswers, profileContext = null) => {
-    const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
-    const profileBlock = buildProfilePromptBlock(profileContext)
-    const basePrompt = `You are a coding mentor.
+export function buildRoadmapPrompt(projectDescription, clarifyingAnswers, profileContext = null) {
+  const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
+  const profileBlock = buildProfilePromptBlock(profileContext)
+
+  return `You are a coding mentor.
 The user wants to build: ${projectDescription}.
 
 Initial clarifying answers:
@@ -275,13 +378,17 @@ ${profileBlock}
 
 Infer the project skill level from the user project context.
 Allowed skill levels: beginner, intermediate, advanced.
-If selected skill level preference is beginner/intermediate/advanced, use that as the target skillLevel.
-If selected skill level preference is none, infer skillLevel from project context as the primary signal and profile context as secondary guidance.
+Use selected skill level preference as the target skillLevel unless it clearly conflicts with project scope.
 Always tailor the roadmap tasks intelligently based on project complexity and clarifying context.
 
 Generate a learning roadmap as exactly 6 tasks.
 Each task guides the user to implement one specific piece of the project themselves.
 Never give complete code solutions in the description or hint fields.
+Special Stage 1 requirement:
+- Task 1 must explain how to start from zero.
+- Task 1 must include at least one practical starter cue: command(s), file/folder structure, or first entry point setup.
+- Task 1 should name the first concrete action the learner can execute immediately.
+- Keep Stage 1 guidance instructional and partial, never full solution code.
 
 Return ONLY a valid raw JSON object. No markdown, no backticks, no explanation.
 Schema:
@@ -292,10 +399,21 @@ Schema:
 The language field must be one of: javascript, typescript, python, html, sql, java, csharp, go, rust, ruby, php, swift, kotlin.
 Use language only as a task-level lock when clearly appropriate.
 The exampleOutput field may contain code as it is shown only when explicitly requested.`
+}
+
+export function useGemini() {
+  const generateRoadmap = useCallback(async (projectDescription, clarifyingAnswers, profileContext = null) => {
+    const basePrompt = buildRoadmapPrompt(
+      projectDescription,
+      clarifyingAnswers,
+      profileContext,
+    )
+    const model = selectGeminiModel(clarifyingAnswers?.skillLevelPreference)
 
     const firstAttempt = await callGemini(basePrompt, {
       temperature: 0.7,
       maxOutputTokens: 1024,
+      model,
     })
     if (firstAttempt.error) {
       return { data: null, error: firstAttempt.error }
@@ -309,6 +427,7 @@ The exampleOutput field may contain code as it is shown only when explicitly req
       const secondAttempt = await callGemini(retryPrompt, {
         temperature: 0.7,
         maxOutputTokens: 1024,
+        model,
       })
 
       if (secondAttempt.error) {
@@ -329,10 +448,12 @@ The exampleOutput field may contain code as it is shown only when explicitly req
     }
   }, [])
 
-  const checkUserCode = useCallback(async (task, userCode, profileContext = null) => {
-    const exampleOutput = toText(task?.exampleOutput ?? '').trim()
-    const profileBlock = buildProfilePromptBlock(profileContext)
-    const prompt = `You are a strict coding mentor and code evaluator.
+  const checkUserCode = useCallback(
+    async (task, userCode, profileContext = null, skillLevel = '') => {
+      const exampleOutput = toText(task?.exampleOutput ?? '').trim()
+      const profileBlock = buildProfilePromptBlock(profileContext)
+      const model = selectGeminiModel(skillLevel)
+      const prompt = `You are a strict coding mentor and code evaluator.
 Evaluate whether the user's code satisfies the current task and expected output.
 
 Task title: ${toText(task?.title)}
@@ -355,41 +476,45 @@ Return ONLY raw JSON with this exact schema:
 {"status":"PASS|FAIL","feedback":"string","outputMatch":true|false,"outputReason":"string"}
 No markdown. No extra keys.`
 
-    const firstAttempt = await callGemini(prompt, {
-      temperature: 0.2,
-      maxOutputTokens: 260,
-    })
-    if (firstAttempt.error) {
-      return { data: null, error: firstAttempt.error }
-    }
-
-    try {
-      const parsed = parseCodeCheckResult(firstAttempt.data)
-      return { data: parsed, error: null }
-    } catch {
-      const retryPrompt = `${prompt}\nYou must return only raw JSON matching the schema exactly.`
-      const secondAttempt = await callGemini(retryPrompt, {
+      const firstAttempt = await callGemini(prompt, {
         temperature: 0.2,
         maxOutputTokens: 260,
+        model,
       })
-
-      if (secondAttempt.error) {
-        return { data: null, error: secondAttempt.error }
+      if (firstAttempt.error) {
+        return { data: null, error: firstAttempt.error }
       }
 
       try {
-        const parsed = parseCodeCheckResult(secondAttempt.data)
+        const parsed = parseCodeCheckResult(firstAttempt.data)
         return { data: parsed, error: null }
-      } catch (error) {
-        return {
-          data: null,
-          error: new Error(
-            `Could not parse code check JSON after retry: ${error.message}`,
-          ),
+      } catch {
+        const retryPrompt = `${prompt}\nYou must return only raw JSON matching the schema exactly.`
+        const secondAttempt = await callGemini(retryPrompt, {
+          temperature: 0.2,
+          maxOutputTokens: 260,
+          model,
+        })
+
+        if (secondAttempt.error) {
+          return { data: null, error: secondAttempt.error }
+        }
+
+        try {
+          const parsed = parseCodeCheckResult(secondAttempt.data)
+          return { data: parsed, error: null }
+        } catch (error) {
+          return {
+            data: null,
+            error: new Error(
+              `Could not parse code check JSON after retry: ${error.message}`,
+            ),
+          }
         }
       }
-    }
-  }, [])
+    },
+    [],
+  )
 
   const askFollowUp = useCallback(
     async (
@@ -408,10 +533,12 @@ No markdown. No extra keys.`
         skillLevel,
         profileContext,
       })
+      const model = selectGeminiModel(skillLevel)
 
       const result = await callGemini(prompt, {
         temperature: 0.4,
         maxOutputTokens: 320,
+        model,
       })
       if (result.error) {
         return { data: null, error: result.error }

@@ -91,7 +91,7 @@ export function useAuth() {
     }
   }, [])
 
-  const signUp = useCallback(async (email, password, username = '') => {
+  const signUp = useCallback(async (email, password, fullName = '') => {
     if (!supabase) {
       const error = supabaseInitError || new Error('Supabase is not configured.')
       setAuthError(error.message)
@@ -104,15 +104,15 @@ export function useAuth() {
 
     try {
       const emailRedirectTo = getEmailRedirectTo()
-      const trimmedUsername = String(username ?? '').trim()
+      const trimmedFullName = String(fullName ?? '').trim()
       const signUpOptions = {}
 
       if (emailRedirectTo) {
         signUpOptions.emailRedirectTo = emailRedirectTo
       }
 
-      if (trimmedUsername) {
-        signUpOptions.data = { username: trimmedUsername }
+      if (trimmedFullName) {
+        signUpOptions.data = { full_name: trimmedFullName }
       }
 
       const signUpPayload =

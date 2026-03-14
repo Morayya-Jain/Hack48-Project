@@ -25,19 +25,14 @@ export const EXPERTISE_OPTIONS = [
     description: "You're completely new to building and want to learn from the ground up.",
   },
   {
-    value: 'exploring',
-    label: 'Exploring',
+    value: 'intermediate',
+    label: 'Intermediate',
     description:
       "You've started experimenting and want clearer guidance while building projects.",
   },
   {
-    value: 'student',
-    label: 'Student',
-    description: 'You actively learn technical skills and want structured practice.',
-  },
-  {
-    value: 'master',
-    label: 'Master',
+    value: 'advanced',
+    label: 'Advanced',
     description: 'You are experienced and want concise, high-level technical coaching.',
   },
 ]
@@ -63,6 +58,11 @@ export const INTEREST_OPTIONS = [
 const EXPERTISE_VALUE_SET = new Set(EXPERTISE_OPTIONS.map((option) => option.value))
 const SKILL_VALUE_SET = new Set(SKILL_OPTIONS.map((option) => option.value))
 const INTEREST_VALUE_SET = new Set(INTEREST_OPTIONS.map((option) => option.value))
+const LEGACY_EXPERTISE_LEVEL_MAP = {
+  exploring: 'intermediate',
+  student: 'intermediate',
+  master: 'advanced',
+}
 
 function toStringArray(value) {
   if (Array.isArray(value)) {
@@ -105,6 +105,10 @@ export function normalizeExpertiseLevel(value) {
   const normalized = toText(value).trim().toLowerCase()
   if (EXPERTISE_VALUE_SET.has(normalized)) {
     return normalized
+  }
+
+  if (LEGACY_EXPERTISE_LEVEL_MAP[normalized]) {
+    return LEGACY_EXPERTISE_LEVEL_MAP[normalized]
   }
 
   return ''

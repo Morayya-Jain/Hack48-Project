@@ -71,57 +71,71 @@ function FileTree({
             return (
               <div
                 key={file.id}
-                className={`relative flex items-center justify-between rounded-lg border px-2 py-1.5 ${
+                className={`rounded-lg border px-2 py-1.5 ${
                   isActive ? 'border-slate-800 bg-slate-100' : 'border-transparent hover:bg-slate-100'
                 }`}
               >
-                <button
-                  type="button"
-                  className={`min-w-0 flex-1 truncate text-left text-sm ${
-                    isActive ? 'font-semibold text-slate-900' : 'text-slate-700'
-                  }`}
-                  onClick={() => {
-                    setOpenMenuFileId(null)
-                    onSelectFile(file.id)
-                  }}
-                >
-                  {file.path}
-                </button>
-
-                <div className="relative ml-2">
+                <div className="flex items-center justify-between">
                   <button
                     type="button"
-                    className="rounded-md border border-transparent px-2 py-1 text-xs text-slate-600 hover:border-slate-300 hover:bg-white hover:text-slate-900"
+                    className={`min-w-0 flex-1 truncate text-left text-sm ${
+                      isActive ? 'font-semibold text-slate-900' : 'text-slate-700'
+                    }`}
+                    onClick={() => {
+                      setOpenMenuFileId(null)
+                      onSelectFile(file.id)
+                    }}
+                  >
+                    {file.path}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="ml-2 inline-flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-slate-600 hover:border-slate-300 hover:bg-white hover:text-slate-900"
                     onClick={() =>
                       setOpenMenuFileId((prev) => (prev === file.id ? null : file.id))
                     }
                     disabled={isBusy}
                     title="File actions"
+                    aria-label={`Actions for ${file.path}`}
                   >
-                    ...
+                    <svg
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <circle cx="12" cy="5" r="1.5" />
+                      <circle cx="12" cy="12" r="1.5" />
+                      <circle cx="12" cy="19" r="1.5" />
+                    </svg>
                   </button>
-
-                  {openMenuFileId === file.id ? (
-                    <div className="absolute right-0 top-8 z-10 w-32 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
-                      <button
-                        type="button"
-                        className="w-full rounded-md px-2 py-1 text-left text-sm text-slate-700 hover:bg-slate-100"
-                        onClick={() => handleRename(file)}
-                        disabled={isBusy}
-                      >
-                        Rename
-                      </button>
-                      <button
-                        type="button"
-                        className={`${buttonDanger} ${sizeSm} mt-1 w-full justify-start rounded-md px-2 py-1`}
-                        onClick={() => handleDelete(file)}
-                        disabled={isBusy}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  ) : null}
                 </div>
+
+                {openMenuFileId === file.id ? (
+                  <div className="mt-2 space-y-1 rounded-lg border border-slate-200 bg-white p-1">
+                    <button
+                      type="button"
+                      className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-left text-xs text-slate-700 hover:bg-slate-100"
+                      onClick={() => handleRename(file)}
+                      disabled={isBusy}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      className={`${buttonDanger} ${sizeSm} w-full justify-start rounded-md px-2 py-1 text-xs`}
+                      onClick={() => handleDelete(file)}
+                      disabled={isBusy}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ) : null}
               </div>
             )
           })

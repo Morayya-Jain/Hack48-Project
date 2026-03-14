@@ -1,11 +1,36 @@
 import { supabase, supabaseInitError } from './supabaseClient'
 import { normalizeProfile, toProfilePayload } from './profile'
 
+function normalizeProjectSkillLevel(value) {
+  const normalized = `${value || ''}`.trim().toLowerCase()
+
+  if (normalized === 'beginner' || normalized === 'intermediate' || normalized === 'advanced') {
+    return normalized
+  }
+
+  if (normalized === 'exploring' || normalized === 'student') {
+    return 'intermediate'
+  }
+
+  if (normalized === 'master') {
+    return 'advanced'
+  }
+
+  return 'intermediate'
+}
+
 function getSupabaseUnavailableResponse() {
   return {
     data: null,
     error: supabaseInitError || new Error('Supabase is not configured.'),
   }
+}
+
+function isProjectFilesTableMissing(error) {
+  const message = error?.message || ''
+  return /project_files|schema cache|relation .*project_files|Could not find the 'project_files'|does not exist/i.test(
+    message,
+  )
 }
 
 export async function getUserProfile(userId) {
@@ -69,7 +94,7 @@ export async function createProject(userId, description, skillLevel) {
       .insert({
         user_id: userId,
         description,
-        skill_level: skillLevel,
+        skill_level: normalizeProjectSkillLevel(skillLevel),
       })
       .select()
       .single()
@@ -332,6 +357,54 @@ export async function deleteProjectFile(fileId) {
       .single()
 
     return { data, error }
+  } catch (error) {
+    return { data: null, error }
+  }
+}
+
+export async function deleteProject(projectId, userId) {
+  if (!supabase) {
+    return getSupabaseUnavailableResponse()
+  }
+
+  try {
+    const { error: filesError } = await supabase
+      .from('project_files')
+      .delete()
+      .eq('project_id', projectId)
+
+    if (filesError && !isProjectFilesTableMissing(filesError)) {
+      return { data: null, error: filesError }
+    }
+
+    const { error: tasksError } = await supabase
+      .from('tasks')
+      .delete()
+      .eq('project_id', projectId)
+
+    if (tasksError) {
+      return { data: null, error: tasksError }
+    }
+
+    const { data, error } = await supabase
+      .from('projects')
+      .delete()
+      .eq('id', projectId)
+      .eq('user_id', userId)
+      .select('*')
+
+    if (error) {
+      return { data: null, error }
+    }
+
+    if (!Array.isArray(data) || data.length === 0) {
+      return {
+        data: null,
+        error: new Error('Project was not found or you do not have permission to delete it.'),
+      }
+    }
+
+    return { data: data[0], error: null }
   } catch (error) {
     return { data: null, error }
   }

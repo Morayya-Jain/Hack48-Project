@@ -41,9 +41,9 @@ Apply these rules to all new and updated screens unless a specific feature expli
 ### Auth fields
 
 - Login: `email`, `password`
-- Signup: `username`, `email`, `password`
-- Username persists to Supabase Auth metadata (`user_metadata.username`).
-- Resend confirmation email appears only in signup mode.
+- Signup: `full name`, `email`, `password`
+- Full name persists to Supabase Auth metadata (`user_metadata.full_name`).
+- Resend confirmation email appears only after a signup attempt in signup mode.
 
 ### Social auth
 

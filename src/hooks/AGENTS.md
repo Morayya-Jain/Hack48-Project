@@ -12,7 +12,7 @@
 - Use `useCallback` for exported actions where practical.
 
 ## Gemini-Specific Rules
-- Use model `gemini-2.0-flash`.
+- Use `gemini-2.5-flash` for beginner/intermediate flows and `gemini-2.5-pro` for hard/advanced flows.
 - Enforce 15s timeout.
 - For roadmap generation: retry once on JSON parsing failure with stricter prompt.
 - Ensure mentor guidance does not provide complete solutions.

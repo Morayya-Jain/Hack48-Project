@@ -107,15 +107,11 @@ function expertiseResponseStyle(expertiseLevel) {
     return 'Explain from first principles and keep the next step very small.'
   }
 
-  if (expertiseLevel === 'exploring') {
+  if (expertiseLevel === 'intermediate') {
     return 'Keep explanations practical and concise, then suggest one focused next action.'
   }
 
-  if (expertiseLevel === 'student') {
-    return 'Use structured explanation with reasoning and one implementation checkpoint.'
-  }
-
-  if (expertiseLevel === 'master') {
+  if (expertiseLevel === 'advanced') {
     return 'Respond concisely with technical precision and highlight tradeoffs or edge cases.'
   }
 

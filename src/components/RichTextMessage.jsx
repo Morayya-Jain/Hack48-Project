@@ -59,24 +59,35 @@ function normalizeLanguage(language) {
   return LANGUAGE_ALIASES[normalized] || normalized
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+}
+
 function highlightCode(content, language) {
   const normalizedLanguage = normalizeLanguage(language)
 
-  if (normalizedLanguage && hljs.getLanguage(normalizedLanguage)) {
-    return hljs.highlight(content, {
-      language: normalizedLanguage,
-      ignoreIllegals: true,
-    }).value
-  }
+  try {
+    if (normalizedLanguage && hljs.getLanguage(normalizedLanguage)) {
+      return hljs.highlight(content, {
+        language: normalizedLanguage,
+        ignoreIllegals: true,
+      }).value
+    }
 
-  return hljs.highlightAuto(content).value
+    return hljs.highlightAuto(content).value
+  } catch {
+    return escapeHtml(content)
+  }
 }
 
-function RichTextMessage({ text }) {
+function RichTextMessage({ text, className = '' }) {
   const segments = parseRichTextSegments(text)
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className={`flex flex-col gap-2 text-sm leading-6 text-slate-800 ${className}`.trim()}>
       {segments.map((segment, index) => {
         if (segment.type === 'code') {
           const highlighted = highlightCode(segment.content, segment.language)
@@ -93,9 +104,9 @@ function RichTextMessage({ text }) {
                   {languageLabel}
                 </span>
               </div>
-              <pre className="m-0 overflow-auto p-3 text-[13px] leading-5">
+              <pre className="m-0 max-h-80 overflow-auto bg-slate-950 p-3 text-[12px] leading-5">
                 <code
-                  className={`hljs !bg-transparent !p-0 font-mono ${languageClass ? `language-${languageClass}` : ''}`}
+                  className={`hljs !bg-transparent !p-0 font-mono text-slate-100 ${languageClass ? `language-${languageClass}` : ''}`}
                   dangerouslySetInnerHTML={{ __html: highlighted }}
                 />
               </pre>
@@ -108,7 +119,7 @@ function RichTextMessage({ text }) {
         }
 
         return (
-          <p key={`text-${index}`} className="whitespace-pre-wrap break-words">
+          <p key={`text-${index}`} className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">
             {segment.content}
           </p>
         )
