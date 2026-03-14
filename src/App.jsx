@@ -162,8 +162,6 @@ function App() {
   const [isMarkingTaskComplete, setIsMarkingTaskComplete] = useState(false)
   const lastCheckSignatureRef = useRef('')
   const lastCheckResultRef = useRef(null)
-  const lastFollowUpSignatureRef = useRef('')
-  const lastFollowUpResponseRef = useRef('')
   const saveTimeoutRef = useRef(null)
   const lastSavedFileContentRef = useRef({})
   const importInputRef = useRef(null)
@@ -970,32 +968,25 @@ function App() {
       }
 
       const normalizedQuestion = userQuestion.trim()
-      const followUpSignature = `${currentTask.id}::${userCode}::${normalizedQuestion}`
-
-      if (
-        followUpSignature === lastFollowUpSignatureRef.current &&
-        lastFollowUpResponseRef.current
-      ) {
-        setUiError('')
-        setFeedbackHistory([{ role: 'ai', message: lastFollowUpResponseRef.current }])
+      if (!normalizedQuestion) {
         return
       }
 
       setUiError('')
       setIsAskingFollowUp(true)
-      setFeedbackHistory([])
 
       const updatedHistory = [
         ...feedbackHistory,
-        { role: 'user', message: userQuestion },
+        { role: 'user', message: normalizedQuestion },
       ]
 
       try {
         const result = await askFollowUp(
           currentTask,
           userCode,
-          userQuestion,
+          normalizedQuestion,
           updatedHistory,
+          skillLevel,
         )
 
         if (result.error) {
@@ -1003,9 +994,7 @@ function App() {
           return
         }
 
-        lastFollowUpSignatureRef.current = followUpSignature
-        lastFollowUpResponseRef.current = result.data
-        setFeedbackHistory([{ role: 'ai', message: result.data }])
+        setFeedbackHistory([...updatedHistory, { role: 'ai', message: result.data }])
       } catch (error) {
         console.error(error)
         setUiError(error.message || 'Follow-up request failed.')
@@ -1017,6 +1006,7 @@ function App() {
       askFollowUp,
       currentTask,
       feedbackHistory,
+      skillLevel,
       setFeedbackHistory,
       setIsAskingFollowUp,
       userCode,
@@ -1027,11 +1017,6 @@ function App() {
     lastCheckSignatureRef.current = ''
     lastCheckResultRef.current = null
   }, [currentTask?.id, userCode])
-
-  useEffect(() => {
-    lastFollowUpSignatureRef.current = ''
-    lastFollowUpResponseRef.current = ''
-  }, [currentTask?.id])
 
   const handleMarkCurrentTaskComplete = useCallback(async () => {
     if (!currentTask || isMarkingTaskComplete) {

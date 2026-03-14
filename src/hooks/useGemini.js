@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
-import { sanitizeLanguage } from '../lib/runtimeUtils'
+import { buildFollowUpPrompt } from '../lib/followUpMentor.js'
+import { sanitizeLanguage } from '../lib/runtimeUtils.js'
 
 const GEMINI_URL =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
@@ -272,12 +273,18 @@ No markdown. No extra keys.`
   }, [])
 
   const askFollowUp = useCallback(
-    async (task, userCode, userQuestion, feedbackHistory) => {
-      const prompt = `You are a concise coding mentor in an ongoing conversation.\nCurrent task: ${task.description}\nUser's current code: ${userCode}\nConversation so far: ${JSON.stringify(feedbackHistory)}\nUser's new question: ${userQuestion}\nAnswer their question helpfully but do not give them complete working code.\nGive hints, ask one focused question back, and point them in the right direction.\nIf you include code, put it in fenced triple backticks with a language tag when possible.\nOnly include short illustrative snippets (max 6 lines), never a complete solution.\nStart directly with the answer. No greeting, no preamble, no filler.\nKeep response under 80 words.`
+    async (task, userCode, userQuestion, feedbackHistory, skillLevel) => {
+      const prompt = buildFollowUpPrompt({
+        task,
+        userCode,
+        userQuestion,
+        feedbackHistory,
+        skillLevel,
+      })
 
       const result = await callGemini(prompt, {
         temperature: 0.4,
-        maxOutputTokens: 180,
+        maxOutputTokens: 320,
       })
       if (result.error) {
         return { data: null, error: result.error }
