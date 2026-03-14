@@ -5,7 +5,7 @@
 2. If unauthenticated -> `AuthScreen`.
 3. If authenticated -> load projects.
 4. If no projects -> `Onboarding`; else `Dashboard`.
-5. On onboarding submit -> generate roadmap -> create project -> save tasks.
+5. On onboarding submit -> infer project skill level + generate roadmap -> create project -> save tasks.
 6. Enter workspace (`Roadmap` + `Editor` + `FeedbackPanel` + `HintBox`).
 7. Complete all tasks -> mark project complete -> `CompletionScreen`.
 

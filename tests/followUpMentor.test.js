@@ -24,6 +24,17 @@ test('shouldUseFoundationFirst enables mode from explicit user signal', () => {
   )
 })
 
+test('shouldUseFoundationFirst still enables mode for advanced level when beginner signals exist', () => {
+  assert.equal(
+    shouldUseFoundationFirst(
+      'advanced',
+      'I am new to this and need the basics first.',
+      [],
+    ),
+    true,
+  )
+})
+
 test('shouldUseFoundationFirst stays off without beginner signals', () => {
   assert.equal(
     shouldUseFoundationFirst('advanced', 'How can I optimize this function?', []),

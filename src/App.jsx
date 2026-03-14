@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AuthScreen from './components/AuthScreen'
 import CompletionScreen from './components/CompletionScreen'
-import Dashboard from './components/Dashboard'
 import Editor from './components/Editor'
 import FeedbackPanel from './components/FeedbackPanel'
 import FileTree from './components/FileTree'
@@ -86,6 +85,29 @@ function normalizeTask(task) {
     completed: Boolean(task.completed),
     task_index: typeof task.task_index === 'number' ? task.task_index : 0,
   }
+}
+
+function normalizeProjectSkillLevel(value) {
+  const normalized = toText(value).trim().toLowerCase()
+  if (normalized === 'beginner' || normalized === 'intermediate' || normalized === 'advanced') {
+    return normalized
+  }
+
+  return 'intermediate'
+}
+
+function normalizeSelectedSkillLevel(value) {
+  const normalized = toText(value).trim().toLowerCase()
+  if (
+    normalized === 'none' ||
+    normalized === 'beginner' ||
+    normalized === 'intermediate' ||
+    normalized === 'advanced'
+  ) {
+    return normalized
+  }
+
+  return 'none'
 }
 
 function isProjectFilesTableMissing(error) {
@@ -310,28 +332,26 @@ function App() {
     [setIsLoadingProfile, setProfile],
   )
 
-  const resolveLandingScreen = useCallback((nextProjects, nextProfile, profileError) => {
+  const resolveLandingScreen = useCallback((nextProfile, profileError) => {
     if (isProfilesTableMissing(profileError) || !profileError) {
       if (!isProfileComplete(nextProfile)) {
         return 'profile-onboarding'
       }
     }
 
-    return nextProjects.length === 0 ? 'onboarding' : 'dashboard'
+    return 'dashboard'
   }, [])
 
   const initializeAuthenticatedUser = useCallback(
     async (userId) => {
       setUiError('')
-      const [projectsResult, profileResult] = await Promise.all([
+      const [, profileResult] = await Promise.all([
         loadProjects(userId),
         loadProfile(userId),
       ])
 
-      const nextProjects = projectsResult?.data ?? []
       const nextProfile = profileResult?.data ?? null
       const nextScreen = resolveLandingScreen(
-        nextProjects,
         nextProfile,
         profileResult?.error ?? null,
       )
@@ -512,7 +532,7 @@ function App() {
     setPreviewSrcDoc('')
     setPreviewError('')
     setIsEditingProfile(false)
-    setScreen('onboarding')
+    setScreen('dashboard')
   }, [resetApp])
 
   const handleEditProfile = useCallback(() => {
@@ -561,7 +581,7 @@ function App() {
         }
 
         setIsEditingProfile(false)
-        setScreen(isEditingProfile ? 'dashboard' : projects.length === 0 ? 'onboarding' : 'dashboard')
+        setScreen('dashboard')
       } catch (error) {
         console.error(error)
         setUiError(error.message || 'Could not save profile.')
@@ -569,11 +589,11 @@ function App() {
         setIsSavingProfile(false)
       }
     },
-    [isEditingProfile, projects.length, setIsSavingProfile, setProfile, user],
+    [setIsSavingProfile, setProfile, user],
   )
 
   const handleGenerateRoadmap = useCallback(
-    async (description, nextSkillLevel) => {
+    async (description, clarifyingAnswers) => {
       if (!user) {
         setUiError('You must be logged in to create a project.')
         return
@@ -582,12 +602,11 @@ function App() {
       setUiError('')
       setIsGeneratingRoadmap(true)
       setProjectDescription(description)
-      setSkillLevel(nextSkillLevel)
 
       try {
         const roadmapResult = await generateRoadmap(
           description,
-          nextSkillLevel,
+          clarifyingAnswers,
           profileToPromptContext(profile),
         )
         if (roadmapResult.error) {
@@ -595,10 +614,28 @@ function App() {
           return
         }
 
+        const inferredSkillLevel = normalizeProjectSkillLevel(roadmapResult.data?.skillLevel)
+        const roadmapTasks = Array.isArray(roadmapResult.data?.tasks)
+          ? roadmapResult.data.tasks
+          : []
+
+        if (roadmapTasks.length === 0) {
+          setUiError('Roadmap generation failed: no tasks were returned.')
+          return
+        }
+
+        const selectedSkillLevel = normalizeSelectedSkillLevel(
+          clarifyingAnswers?.skillLevelPreference,
+        )
+        const effectiveSkillLevel =
+          selectedSkillLevel === 'none' ? inferredSkillLevel : selectedSkillLevel
+
+        setSkillLevel(effectiveSkillLevel)
+
         const { data: projectData, error: projectError } = await createProject(
           user.id,
           description,
-          nextSkillLevel,
+          effectiveSkillLevel,
         )
 
         if (projectError || !projectData) {
@@ -610,7 +647,7 @@ function App() {
         const { data: savedTaskData, error: saveError } = await saveTasks(
           projectData.id,
           user.id,
-          roadmapResult.data,
+          roadmapTasks,
         )
 
         if (saveError || !savedTaskData) {
@@ -677,7 +714,7 @@ function App() {
 
         setCurrentProjectId(project.id)
         setProjectDescription(project.description)
-        setSkillLevel(project.skill_level)
+        setSkillLevel(normalizeProjectSkillLevel(project.skill_level))
         setTasks(normalizedTasks)
         setCurrentTaskIndex(firstIncomplete === -1 ? 0 : firstIncomplete)
         resetTaskSupportState()
@@ -1543,28 +1580,17 @@ function App() {
 
   if (screen === 'dashboard' && tasks.length === 0 && !currentProjectId) {
     return (
-      <Dashboard
-        projects={projects}
-        isLoadingProjects={isLoadingProjects}
-        onStartNewProject={handleStartNewProject}
-        onEditProfile={handleEditProfile}
-        onContinueProject={handleContinueProject}
-        onLogOut={handleLogOut}
-        onRefresh={() => loadProjects(appUser.id)}
-        errorMessage={uiError}
-      />
-    )
-  }
-
-  if (screen === 'onboarding' && tasks.length === 0) {
-    return (
       <Onboarding
         onSubmit={handleGenerateRoadmap}
-        onBack={handleBackToDashboard}
+        projects={projects}
+        isLoadingProjects={isLoadingProjects}
+        onContinueProject={handleContinueProject}
+        onEditProfile={handleEditProfile}
+        onLogOut={handleLogOut}
+        user={appUser}
         isGeneratingRoadmap={isGeneratingRoadmap}
         errorMessage={uiError}
         defaultDescription={projectDescription}
-        defaultSkillLevel={skillLevel}
       />
     )
   }

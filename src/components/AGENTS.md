@@ -8,7 +8,7 @@
 ## Expected Component Roles
 - `AuthScreen`: login/signup toggle and submit.
 - `Dashboard`: start-new + resume list + logout.
-- `Onboarding`: collect description/skill, trigger roadmap creation.
+- `Onboarding`: collect project idea + clarifying answers, trigger roadmap creation.
 - `Roadmap`: task list, current highlight, completion indicators.
 - `Editor`: Monaco wrapper with language detection + read-only review mode.
 - `FeedbackPanel`: check code + follow-up chat stream.

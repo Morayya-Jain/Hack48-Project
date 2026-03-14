@@ -6,13 +6,21 @@ import {
   expertiseLabel,
   labelsForValues,
   normalizeProfile,
-} from '../lib/profile'
+} from '../lib/profile.js'
 import { sanitizeLanguage } from '../lib/runtimeUtils.js'
 
 const GEMINI_URL =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
 const TIMEOUT_MS = 15000
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY?.trim()
+const GEMINI_API_KEY = import.meta.env?.VITE_GEMINI_API_KEY?.trim()
+const DEFAULT_PROJECT_SKILL_LEVEL = 'intermediate'
+const PROJECT_SKILL_LEVELS = new Set(['beginner', 'intermediate', 'advanced'])
+const DEFAULT_CLARIFYING_ANSWERS = {
+  skillLevelPreference: 'none',
+  experience: 'Not specified.',
+  scope: 'Start with a simple MVP.',
+  time: 'Moderate pace.',
+}
 
 function cleanJsonString(text) {
   return text.replace(/```json/gi, '').replace(/```/g, '').trim()
@@ -112,6 +120,72 @@ function parseCodeCheckResult(text) {
   }
 }
 
+function normalizeProjectSkillLevel(value) {
+  const normalized = toText(value).trim().toLowerCase()
+  if (PROJECT_SKILL_LEVELS.has(normalized)) {
+    return normalized
+  }
+
+  return DEFAULT_PROJECT_SKILL_LEVEL
+}
+
+export function normalizeClarifyingAnswers(clarifyingAnswers) {
+  const source =
+    clarifyingAnswers && typeof clarifyingAnswers === 'object' ? clarifyingAnswers : {}
+  const rawSkillLevelPreference = toText(source.skillLevelPreference).trim().toLowerCase()
+  const skillLevelPreference = PROJECT_SKILL_LEVELS.has(rawSkillLevelPreference)
+    ? rawSkillLevelPreference
+    : rawSkillLevelPreference === 'none'
+      ? 'none'
+      : DEFAULT_CLARIFYING_ANSWERS.skillLevelPreference
+
+  return {
+    skillLevelPreference,
+    experience: toText(source.experience).trim() || DEFAULT_CLARIFYING_ANSWERS.experience,
+    scope: toText(source.scope).trim() || DEFAULT_CLARIFYING_ANSWERS.scope,
+    time: toText(source.time).trim() || DEFAULT_CLARIFYING_ANSWERS.time,
+  }
+}
+
+export function parseRoadmapGenerationResult(text) {
+  const cleaned = cleanJsonString(text)
+  const parsed = JSON.parse(cleaned)
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Roadmap response is not a JSON object.')
+  }
+
+  if (!Array.isArray(parsed.tasks)) {
+    throw new Error('Roadmap response must include a tasks array.')
+  }
+
+  if (parsed.tasks.length !== 6) {
+    throw new Error('Roadmap must contain exactly 6 tasks.')
+  }
+
+  return {
+    skillLevel: normalizeProjectSkillLevel(parsed.skillLevel),
+    tasks: parsed.tasks.map((task, index) => {
+      const title = toText(task.title) || `Task ${index + 1}`
+      const description = toText(task.description)
+      const hint = toText(task.hint)
+      const exampleOutput = toText(task.exampleOutput)
+      const lockedLanguage = sanitizeLanguage(task.language)
+
+      return {
+        id: task.id || `ai-task-${index + 1}`,
+        title,
+        description,
+        hint,
+        exampleOutput,
+        language: lockedLanguage,
+        completed: false,
+        task_index: index,
+      }
+    }),
+  }
+}
+
 async function callGemini(prompt, options = {}) {
   const { temperature = 0.5, maxOutputTokens = 256 } = options
 
@@ -185,9 +259,39 @@ async function callGemini(prompt, options = {}) {
 }
 
 export function useGemini() {
-  const generateRoadmap = useCallback(async (projectDescription, skillLevel, profileContext = null) => {
+  const generateRoadmap = useCallback(async (projectDescription, clarifyingAnswers, profileContext = null) => {
+    const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
     const profileBlock = buildProfilePromptBlock(profileContext)
-    const basePrompt = `You are a coding mentor. The user wants to build: ${projectDescription}.\nTheir selected project skill level is: ${skillLevel}.\n${profileBlock}\nGenerate a learning roadmap as a JSON array of exactly 6 tasks.\nEach task guides the user to implement one specific piece of the project themselves.\nNever give code directly in the description or hint fields.\nReturn ONLY a valid raw JSON array. No markdown, no backticks, no explanation.\nSchema: [{id, title, description, hint, exampleOutput, language}]\nThe language field must be one of: javascript, typescript, python, html, sql, java, csharp, go, rust, ruby, php, swift, kotlin.\nUse language only as a task-level lock when clearly appropriate.\nThe exampleOutput field may contain code as it is shown only when explicitly requested.`
+    const basePrompt = `You are a coding mentor.
+The user wants to build: ${projectDescription}.
+
+Initial clarifying answers:
+- Selected skill level preference: ${normalizedAnswers.skillLevelPreference}
+- Prior experience: ${normalizedAnswers.experience}
+- Smallest MVP scope: ${normalizedAnswers.scope}
+- Weekly pace/time commitment: ${normalizedAnswers.time}
+
+${profileBlock}
+
+Infer the project skill level from the user project context.
+Allowed skill levels: beginner, intermediate, advanced.
+If selected skill level preference is beginner/intermediate/advanced, use that as the target skillLevel.
+If selected skill level preference is none, infer skillLevel from project context as the primary signal and profile context as secondary guidance.
+Always tailor the roadmap tasks intelligently based on project complexity and clarifying context.
+
+Generate a learning roadmap as exactly 6 tasks.
+Each task guides the user to implement one specific piece of the project themselves.
+Never give complete code solutions in the description or hint fields.
+
+Return ONLY a valid raw JSON object. No markdown, no backticks, no explanation.
+Schema:
+{
+  "skillLevel": "beginner|intermediate|advanced",
+  "tasks": [{ "id", "title", "description", "hint", "exampleOutput", "language" }]
+}
+The language field must be one of: javascript, typescript, python, html, sql, java, csharp, go, rust, ruby, php, swift, kotlin.
+Use language only as a task-level lock when clearly appropriate.
+The exampleOutput field may contain code as it is shown only when explicitly requested.`
 
     const firstAttempt = await callGemini(basePrompt, {
       temperature: 0.7,
@@ -197,43 +301,11 @@ export function useGemini() {
       return { data: null, error: firstAttempt.error }
     }
 
-    const parseRoadmap = (text) => {
-      const cleaned = cleanJsonString(text)
-      const parsed = JSON.parse(cleaned)
-
-      if (!Array.isArray(parsed)) {
-        throw new Error('Roadmap response is not an array.')
-      }
-
-      if (parsed.length !== 6) {
-        throw new Error('Roadmap must contain exactly 6 tasks.')
-      }
-
-      return parsed.map((task, index) => {
-        const title = toText(task.title) || `Task ${index + 1}`
-        const description = toText(task.description)
-        const hint = toText(task.hint)
-        const exampleOutput = toText(task.exampleOutput)
-        const lockedLanguage = sanitizeLanguage(task.language)
-
-        return {
-          id: task.id || `ai-task-${index + 1}`,
-          title,
-          description,
-          hint,
-          exampleOutput,
-          language: lockedLanguage,
-          completed: false,
-          task_index: index,
-        }
-      })
-    }
-
     try {
-      const roadmap = parseRoadmap(firstAttempt.data)
+      const roadmap = parseRoadmapGenerationResult(firstAttempt.data)
       return { data: roadmap, error: null }
     } catch {
-      const retryPrompt = `${basePrompt}\nYou must return only raw JSON, nothing else.`
+      const retryPrompt = `${basePrompt}\nYou must return only raw JSON matching the schema exactly.`
       const secondAttempt = await callGemini(retryPrompt, {
         temperature: 0.7,
         maxOutputTokens: 1024,
@@ -244,7 +316,7 @@ export function useGemini() {
       }
 
       try {
-        const roadmap = parseRoadmap(secondAttempt.data)
+        const roadmap = parseRoadmapGenerationResult(secondAttempt.data)
         return { data: roadmap, error: null }
       } catch (error) {
         return {
