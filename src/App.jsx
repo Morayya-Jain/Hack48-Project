@@ -273,6 +273,19 @@ function buildNavigationIdentity(screen, currentProjectId) {
   return 'dashboard'
 }
 
+function replaceHashUrl(nextHash) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  if (window.location.hash === nextHash) {
+    return
+  }
+
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`
+  window.history.replaceState(window.history.state, '', nextUrl)
+}
+
 function App() {
   const {
     user,
@@ -923,6 +936,8 @@ function App() {
     hashRestoreNonceRef.current += 1
     isHashRestoreInProgressRef.current = false
     hasAttemptedHashRestoreRef.current = true
+    replaceHashUrl('#/new-project')
+    lastNavigationIdentityRef.current = 'new-project'
     resetApp()
     setUiError('')
     setPreviewSrcDoc('')
@@ -2301,6 +2316,8 @@ function App() {
     hashRestoreNonceRef.current += 1
     isHashRestoreInProgressRef.current = false
     hasAttemptedHashRestoreRef.current = true
+    replaceHashUrl('#/dashboard')
+    lastNavigationIdentityRef.current = 'dashboard'
     resetApp()
     setIsEditingProfile(false)
     setCurrentProjectTitle('')

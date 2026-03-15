@@ -31,11 +31,17 @@ Optional for Python runtime fallback:
 
 ## Supabase Setup
 
-Run the SQL block found at the top of:
+Preferred: run migrations from this repo (includes baseline schema + follow-up updates):
 
-- `src/lib/supabaseClient.js`
+```bash
+supabase db push
+```
 
-in the Supabase SQL editor.
+If you are not using the Supabase CLI, run the SQL files in `supabase/migrations` in order, starting with:
+
+- `supabase/migrations/20260314_initial_schema.sql`
+
+This migration creates `projects`, `tasks`, `project_files`, and `profiles`, and applies required RLS policies.
 
 ### Supabase Auth URL Configuration (Required for Netlify)
 
