@@ -38,6 +38,7 @@ import {
   markTaskComplete as markTaskCompleteInDb,
   markTaskIncomplete as markTaskIncompleteInDb,
   replaceProjectFiles,
+  replaceProjectTasks,
   saveTasks,
   updateProjectTitle,
   upsertUserProfile,
@@ -69,6 +70,11 @@ import {
   getProjectDisplayTitle,
   sanitizeProjectTitle,
 } from './lib/projectTitle'
+import {
+  hasRoadmapRepairAttempted,
+  markRoadmapRepairAttempted,
+  shouldAutoRepairRoadmapTasks,
+} from './lib/roadmapQuality'
 import { prettyLanguageName, sanitizeLanguage } from './lib/runtimeUtils'
 import {
   classifyProjectFilesError,
@@ -93,6 +99,21 @@ function toText(value) {
   } catch {
     return ''
   }
+}
+
+function withTimeout(promise, timeoutMs, timeoutMessage) {
+  let timerId = null
+  const timeoutPromise = new Promise((_, reject) => {
+    timerId = window.setTimeout(() => {
+      reject(new Error(timeoutMessage))
+    }, timeoutMs)
+  })
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timerId !== null) {
+      window.clearTimeout(timerId)
+    }
+  })
 }
 
 function normalizeTask(task) {
@@ -147,6 +168,15 @@ function normalizeSelectedSkillLevel(value) {
   }
 
   return ''
+}
+
+function buildRoadmapRepairClarifyingAnswers(skillLevel) {
+  return {
+    skillLevelPreference: normalizeProjectSkillLevel(skillLevel),
+    experience: 'Existing project; refresh roadmap quality.',
+    scope: 'Keep this project focused on a specific MVP path.',
+    time: 'Moderate pace.',
+  }
 }
 
 function hasStoredProjectTitle(project) {
@@ -410,6 +440,7 @@ function App() {
   const lastNavigationIdentityRef = useRef('')
   const hashRestoreNonceRef = useRef(0)
   const importInputRef = useRef(null)
+  const roadmapWatchdogTimeoutRef = useRef(null)
   const isSignupTransitionPendingRef = useRef(false)
   const signupConfigureLoaderStartedAtRef = useRef(0)
   const {
@@ -461,9 +492,31 @@ function App() {
       if (fileNoticeTimeoutRef.current) {
         clearTimeout(fileNoticeTimeoutRef.current)
       }
+      if (roadmapWatchdogTimeoutRef.current) {
+        clearTimeout(roadmapWatchdogTimeoutRef.current)
+      }
     },
     [],
   )
+
+  useEffect(() => {
+    if (!isGeneratingRoadmap) {
+      if (roadmapWatchdogTimeoutRef.current) {
+        clearTimeout(roadmapWatchdogTimeoutRef.current)
+        roadmapWatchdogTimeoutRef.current = null
+      }
+      return
+    }
+
+    if (roadmapWatchdogTimeoutRef.current) {
+      clearTimeout(roadmapWatchdogTimeoutRef.current)
+    }
+
+    roadmapWatchdogTimeoutRef.current = window.setTimeout(() => {
+      setIsGeneratingRoadmap(false)
+      setUiError('Roadmap generation got stuck and was stopped. Please try again.')
+    }, 35000)
+  }, [isGeneratingRoadmap, setIsGeneratingRoadmap])
 
   useEffect(() => {
     if (feedbackHistory.length === 0) {
@@ -1059,10 +1112,14 @@ function App() {
       setProjectDescription(description)
 
       try {
-        const roadmapResult = await generateRoadmap(
-          description,
-          clarifyingAnswers,
-          profileToPromptContext(profile),
+        const roadmapResult = await withTimeout(
+          generateRoadmap(
+            description,
+            clarifyingAnswers,
+            profileToPromptContext(profile),
+          ),
+          30000,
+          'Roadmap generation is taking too long. Please try again.',
         )
         if (roadmapResult.error) {
           setUiError(roadmapResult.error.message)
@@ -1090,7 +1147,11 @@ function App() {
         let generatedProjectTitle = fallbackProjectTitle
 
         try {
-          const titleResult = await generateProjectTitle(description, effectiveSkillLevel)
+          const titleResult = await withTimeout(
+            generateProjectTitle(description, effectiveSkillLevel),
+            12000,
+            'Project title generation timed out. Using a fallback title.',
+          )
           if (titleResult.error) {
             console.error(titleResult.error)
           } else {
@@ -1103,11 +1164,15 @@ function App() {
           console.error(error)
         }
 
-        const { data: projectData, error: projectError } = await createProject(
-          user.id,
-          description,
-          effectiveSkillLevel,
-          generatedProjectTitle,
+        const { data: projectData, error: projectError } = await withTimeout(
+          createProject(
+            user.id,
+            description,
+            effectiveSkillLevel,
+            generatedProjectTitle,
+          ),
+          15000,
+          'Saving your new project timed out. Please try again.',
         )
 
         if (projectError || !projectData) {
@@ -1116,10 +1181,14 @@ function App() {
           return
         }
 
-        const { data: savedTaskData, error: saveError } = await saveTasks(
-          projectData.id,
-          user.id,
-          roadmapTasks,
+        const { data: savedTaskData, error: saveError } = await withTimeout(
+          saveTasks(
+            projectData.id,
+            user.id,
+            roadmapTasks,
+          ),
+          15000,
+          'Saving roadmap tasks timed out. Please try again.',
         )
 
         if (saveError || !savedTaskData) {
@@ -1127,7 +1196,11 @@ function App() {
           const taskSaveMessage = saveError?.message || 'Could not save tasks.'
 
           try {
-            const { error: rollbackError } = await deleteProjectInDb(projectData.id, user.id)
+            const { error: rollbackError } = await withTimeout(
+              deleteProjectInDb(projectData.id, user.id),
+              8000,
+              'Could not save tasks, and project rollback timed out.',
+            )
             if (rollbackError) {
               console.error(rollbackError)
               setUiError(
@@ -1157,16 +1230,28 @@ function App() {
         setPreviewSrcDoc('')
         setPreviewError('')
         const initialTaskLanguage = sanitizeLanguage(normalizedTasks[0]?.language)
-        await bootstrapProjectFiles({
-          projectId: projectData.id,
-          ownerId: user.id,
-          description,
-          fallbackCode: '',
-          preferredRuntimeLanguage: initialTaskLanguage,
-        })
+        try {
+          await withTimeout(
+            bootstrapProjectFiles({
+              projectId: projectData.id,
+              ownerId: user.id,
+              description,
+              fallbackCode: '',
+              preferredRuntimeLanguage: initialTaskLanguage,
+            }),
+            15000,
+            'Project files are taking too long to initialize. Opening workspace with starter files.',
+          )
+        } catch (bootstrapError) {
+          console.error(bootstrapError)
+          setFileError(bootstrapError.message || 'Could not initialize project files.')
+          syncWorkspaceFiles(
+            createDefaultProjectFiles(description, '', initialTaskLanguage),
+          )
+        }
 
-        await loadProjects(user.id)
         setScreen('workspace')
+        void loadProjects(user.id)
       } catch (error) {
         console.error(error)
         setUiError(error.message || 'Roadmap generation failed.')
@@ -1181,6 +1266,7 @@ function App() {
       loadProjects,
       profile,
       resetTaskSupportState,
+      setFileError,
       setCurrentProjectId,
       setCurrentTaskIndex,
       setIsGeneratingRoadmap,
@@ -1188,7 +1274,112 @@ function App() {
       setCurrentProjectTitle,
       setSkillLevel,
       setTasks,
+      syncWorkspaceFiles,
       user,
+    ],
+  )
+
+  const autoRepairGenericRoadmap = useCallback(
+    async ({ project, ownerId }) => {
+      if (!project?.id || !ownerId) {
+        return
+      }
+
+      const storage = typeof window !== 'undefined' ? window.localStorage : null
+      if (hasRoadmapRepairAttempted(storage, project.id)) {
+        return
+      }
+
+      markRoadmapRepairAttempted(storage, project.id)
+
+      showTimedFileNotice(
+        'Detected an older generic roadmap. Refreshing task quality in the background...',
+        4500,
+      )
+
+      try {
+        const repairResult = await generateRoadmap(
+          project.description,
+          buildRoadmapRepairClarifyingAnswers(project.skill_level),
+          profileToPromptContext(profile),
+        )
+
+        if (
+          repairResult.error ||
+          !Array.isArray(repairResult.data?.tasks) ||
+          repairResult.data.tasks.length < 4
+        ) {
+          setUiError(
+            repairResult.error?.message ||
+              'Could not auto-repair this roadmap right now. You can continue coding and try again later.',
+          )
+          return
+        }
+
+        if (shouldAutoRepairRoadmapTasks(repairResult.data.tasks)) {
+          setUiError(
+            'Auto-repair generated a generic roadmap again. Please try creating a fresh roadmap from New Project.',
+          )
+          return
+        }
+
+        const { data: replacedTasks, error: replaceError } = await replaceProjectTasks(
+          project.id,
+          ownerId,
+          repairResult.data.tasks,
+        )
+
+        if (replaceError || !Array.isArray(replacedTasks) || replacedTasks.length === 0) {
+          console.error(replaceError)
+          setUiError(
+            replaceError?.message ||
+              'Could not save auto-repaired roadmap tasks for this project.',
+          )
+          return
+        }
+
+        const normalizedReplacedTasks = replacedTasks.map(normalizeTask)
+        setProjects((prev) =>
+          prev.map((item) =>
+            item.id === project.id ? { ...item, completed: false } : item,
+          ),
+        )
+
+        if (currentProjectId === project.id) {
+          setTasks(normalizedReplacedTasks)
+          const firstIncomplete = normalizedReplacedTasks.findIndex((task) => !task.completed)
+          setCurrentTaskIndex(firstIncomplete === -1 ? 0 : firstIncomplete)
+          resetTaskSupportState()
+        }
+
+        const { error: markIncompleteError } = await markProjectIncomplete(project.id)
+        if (markIncompleteError) {
+          console.error(markIncompleteError)
+          setUiError(
+            markIncompleteError.message ||
+              'Roadmap auto-repair completed, but project status could not be marked incomplete.',
+          )
+          return
+        }
+
+        showTimedFileNotice('Roadmap refreshed with specific tasks.', 4500)
+      } catch (error) {
+        console.error(error)
+        setUiError(
+          error.message ||
+            'Could not auto-repair this roadmap right now. You can continue coding and try again later.',
+        )
+      }
+    },
+    [
+      currentProjectId,
+      generateRoadmap,
+      profile,
+      resetTaskSupportState,
+      setCurrentTaskIndex,
+      setProjects,
+      setTasks,
+      showTimedFileNotice,
     ],
   )
 
@@ -1219,11 +1410,13 @@ function App() {
           return
         }
 
-        const normalizedTasks = (data ?? []).map(normalizeTask)
+        let normalizedTasks = (data ?? []).map(normalizeTask)
         if (normalizedTasks.length === 0) {
           setUiError('This project has no tasks yet. Regenerate or delete it from Dashboard.')
           return
         }
+
+        const shouldRepairRoadmapInBackground = shouldAutoRepairRoadmapTasks(normalizedTasks)
 
         const firstIncomplete = normalizedTasks.findIndex((task) => !task.completed)
         const resolvedProjectTitle = getProjectDisplayTitle(project)
@@ -1265,6 +1458,10 @@ function App() {
           setScreen('workspace')
         }
 
+        if (shouldRepairRoadmapInBackground) {
+          void autoRepairGenericRoadmap({ project, ownerId })
+        }
+
         if (!hasStoredProjectTitle(project) && appUser?.id) {
           void backfillProjectTitles([project], appUser.id)
         }
@@ -1278,6 +1475,7 @@ function App() {
     [
       resetTaskSupportState,
       appUser,
+      autoRepairGenericRoadmap,
       backfillProjectTitles,
       bootstrapProjectFiles,
       setCurrentProjectId,

@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { buildFollowUpPrompt } from '../lib/followUpMentor.js'
+import { buildFollowUpPrompt, isLikelyCasualCheckIn } from '../lib/followUpMentor.js'
 import { MENTOR_SNIPPET_MAX_LINES } from '../lib/mentorSnippetGuardrail.js'
 import {
   INTEREST_OPTIONS,
@@ -9,6 +9,7 @@ import {
   normalizeProfile,
 } from '../lib/profile.js'
 import { sanitizeProjectTitle } from '../lib/projectTitle.js'
+import { shouldAutoRepairRoadmapTasks } from '../lib/roadmapQuality.js'
 import { sanitizeLanguage } from '../lib/runtimeUtils.js'
 
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
@@ -18,6 +19,8 @@ const TIMEOUT_MS = 15000
 const GEMINI_API_KEY = import.meta.env?.VITE_GEMINI_API_KEY?.trim()
 const DEFAULT_PROJECT_SKILL_LEVEL = 'intermediate'
 const PROJECT_SKILL_LEVELS = new Set(['beginner', 'intermediate', 'advanced', 'master'])
+const MIN_ROADMAP_TASKS = 4
+const MAX_ROADMAP_TASKS = 10
 const FOLLOW_UP_SUGGESTION_COUNT = 2
 const CODE_CHECK_RESPONSE_SCHEMA = {
   type: 'OBJECT',
@@ -38,8 +41,8 @@ const ROADMAP_RESPONSE_SCHEMA = {
     },
     tasks: {
       type: 'ARRAY',
-      minItems: 6,
-      maxItems: 6,
+      minItems: MIN_ROADMAP_TASKS,
+      maxItems: MAX_ROADMAP_TASKS,
       items: {
         type: 'OBJECT',
         properties: {
@@ -50,7 +53,7 @@ const ROADMAP_RESPONSE_SCHEMA = {
           exampleOutput: { type: 'STRING' },
           language: { type: 'STRING' },
         },
-        required: ['title', 'description', 'hint'],
+        required: ['title', 'description', 'hint', 'exampleOutput'],
       },
     },
   },
@@ -74,45 +77,39 @@ const DEFAULT_CLARIFYING_ANSWERS = {
   scope: 'Start with a simple MVP.',
   time: 'Moderate pace.',
 }
-const STARTER_CONTEXT_KEYWORDS =
-  /(command|terminal|run|create|init|install|folder|file|structure|scaffold|entry|index|main|setup|starter|start|first step)/i
-const STAGE_ONE_STARTER_FALLBACKS = {
-  javascript: {
-    description:
-      'Start by setting up a small project skeleton and confirming your entry file runs. Create your initial files and verify a basic script can execute before adding features.',
-    hint:
-      'In your terminal, initialize the project and create the first files (for example, package config and a main entry file). Run a simple starter command to confirm your setup works.',
-  },
-  typescript: {
-    description:
-      'Start by creating a basic TypeScript project structure with a clear entry point. Confirm your compiler/tooling can run before implementing feature logic.',
-    hint:
-      'Set up TypeScript config and an entry file first, then run a compile or dev command to verify the environment is ready.',
-  },
-  python: {
-    description:
-      'Start with a clean Python project layout and an entry script. Verify your environment can execute the starter file before building any task-specific behavior.',
-    hint:
-      'Create a virtual environment, add a starter script, and run it once from the terminal to confirm your setup.',
-  },
-  html: {
-    description:
-      'Start by creating the base page structure and identifying where each main section of your UI will live. Keep the first pass minimal so you can build incrementally.',
-    hint:
-      'Create an `index.html` with basic document structure and placeholder sections, then open it in the browser to validate your starting layout.',
-  },
-  sql: {
-    description:
-      'Start by defining the core table structure and relationships needed for the smallest working version. Validate schema creation before writing complex queries.',
-    hint:
-      'Write and run your initial `CREATE TABLE` statements for the key entities first, then verify the schema exists before adding inserts or joins.',
-  },
-  default: {
-    description:
-      'Start with a minimal project scaffold and verify your environment works before building features. Focus on the first executable step and basic file structure.',
-    hint:
-      'Use one concrete startup action first (create core files or run initial setup command), then confirm it runs so you can iterate safely.',
-  },
+const LOW_QUALITY_FOLLOW_UP_REGEX =
+  /\b(what you should do next is do that|do that|just do it|same as above|as mentioned above|keep doing that|that should do it)\b/i
+const ACTIONABLE_FOLLOW_UP_VERB_REGEX =
+  /\b(create|add|run|test|verify|check|open|write|update|rename|refactor|import|define|pass|return|log|trace|install|split|extract|replace|move|map|filter)\b/i
+const ROADMAP_ATTEMPT_TIMEOUT_MS = 8000
+const ROADMAP_FALLBACK_STOPWORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'app',
+  'application',
+  'build',
+  'for',
+  'from',
+  'in',
+  'is',
+  'it',
+  'of',
+  'on',
+  'project',
+  'simple',
+  'the',
+  'to',
+  'with',
+])
+
+function truncateText(value, maxChars = 700) {
+  const text = toText(value)
+  if (!text) {
+    return ''
+  }
+
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars)}...`
 }
 
 function cleanJsonString(text) {
@@ -146,6 +143,17 @@ function extractLooseJsonFieldValues(source, key, nextKey = '') {
   }
 
   return values
+}
+
+function extractTaskFieldValues(source, key, nextKey = '') {
+  const primaryValues = nextKey
+    ? extractLooseJsonFieldValues(source, key, nextKey)
+    : []
+  if (primaryValues.length > 0) {
+    return primaryValues
+  }
+
+  return extractLooseJsonFieldValues(source, key)
 }
 
 function parseJsonObjectCandidate(text) {
@@ -250,6 +258,106 @@ function compactText(value, maxChars = 240) {
   return `${normalized.slice(0, maxChars).trim()}...`
 }
 
+function collapseText(value) {
+  return toText(value).replace(/\s+/g, ' ').trim()
+}
+
+function firstSentence(value, fallback = '') {
+  const normalized = collapseText(value)
+  if (!normalized) {
+    return fallback
+  }
+
+  const sentenceMatch = normalized.match(/^(.+?[.!?])(\s|$)/)
+  if (sentenceMatch?.[1]) {
+    return sentenceMatch[1].trim()
+  }
+
+  return normalized
+}
+
+function normalizeWords(value) {
+  return collapseText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
+function hasActionableFollowUp(text) {
+  if (ACTIONABLE_FOLLOW_UP_VERB_REGEX.test(text)) {
+    return true
+  }
+
+  return /try this|next step|first step|\b1\./i.test(text)
+}
+
+export function isLowQualityMentorResponse(responseText, userQuestion = '') {
+  const normalizedResponse = collapseText(responseText)
+  if (!normalizedResponse) {
+    return true
+  }
+
+  if (LOW_QUALITY_FOLLOW_UP_REGEX.test(normalizedResponse.toLowerCase())) {
+    return true
+  }
+
+  if (normalizedResponse.length < 40) {
+    return true
+  }
+
+  if (!hasActionableFollowUp(normalizedResponse.toLowerCase())) {
+    return true
+  }
+
+  const responseWords = normalizeWords(normalizedResponse)
+  const questionWords = normalizeWords(userQuestion)
+
+  if (responseWords.length === 0 || questionWords.length === 0) {
+    return false
+  }
+
+  const questionWordSet = new Set(questionWords)
+  const overlapCount = responseWords.filter((word) => questionWordSet.has(word)).length
+  const overlapRatio = overlapCount / Math.max(1, responseWords.length)
+  const lengthsClose = Math.abs(responseWords.length - questionWords.length) <= 4
+
+  if (overlapRatio > 0.72 && lengthsClose) {
+    return true
+  }
+
+  return false
+}
+
+export function buildDeterministicFollowUpFallback(task, userQuestion = '', skillLevel = '') {
+  const normalizedSkillLevel = normalizeModelSkillLevel(skillLevel)
+  const beginnerMode = normalizedSkillLevel === 'beginner'
+  const title = collapseText(task?.title) || 'Current task'
+  const description =
+    firstSentence(task?.description, '') || 'You are still implementing this task scope.'
+  const hint =
+    firstSentence(task?.hint, '') ||
+    'Start with one tiny change you can validate immediately.'
+  const example = firstSentence(task?.exampleOutput, '')
+  const questionCue = collapseText(userQuestion)
+    ? `Your question was: "${collapseText(userQuestion)}".`
+    : ''
+
+  if (beginnerMode) {
+    return `What this means:
+${description}
+Why it matters:
+This keeps "${title}" focused and testable without jumping ahead.
+Try this tiny next step:
+Pick one small action from the hint: ${hint} ${questionCue} Then run a quick manual check and note exactly what changed.`
+  }
+
+  return `Answer:
+${description} ${questionCue}
+Try this next step:
+Apply this hint first: ${hint}${example ? ` Then verify against this expected outcome: ${example}` : ' Then verify with one concrete expected outcome and a manual check.'}`
+}
+
 function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
@@ -293,8 +401,46 @@ function toText(value) {
   }
 }
 
-function getGeminiText(data) {
-  return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+export function getGeminiText(data) {
+  const candidates = Array.isArray(data?.candidates) ? data.candidates : []
+  if (candidates.length === 0) {
+    return ''
+  }
+
+  const parsedCandidates = candidates.map((candidate) => {
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []
+    const text = parts.map((part) => toText(part?.text)).join('').trim()
+    const finishReason = toText(candidate?.finishReason).trim().toUpperCase()
+
+    return {
+      text,
+      textLength: text.length,
+      finishReason,
+    }
+  })
+
+  const nonEmptyCandidates = parsedCandidates.filter((candidate) => candidate.textLength > 0)
+  if (nonEmptyCandidates.length === 0) {
+    return ''
+  }
+
+  const preferredCandidates = nonEmptyCandidates.filter((candidate) => {
+    return (
+      candidate.finishReason === 'STOP' ||
+      candidate.finishReason === 'FINISH_REASON_UNSPECIFIED' ||
+      !candidate.finishReason
+    )
+  })
+
+  const candidatePool = preferredCandidates.length > 0 ? preferredCandidates : nonEmptyCandidates
+  const selectedCandidate = candidatePool.reduce((best, candidate) => {
+    if (!best || candidate.textLength > best.textLength) {
+      return candidate
+    }
+    return best
+  }, null)
+
+  return selectedCandidate?.text || ''
 }
 
 function expertiseResponseStyle(expertiseLevel) {
@@ -530,59 +676,44 @@ export function selectGeminiModel(skillLevel) {
   return GEMINI_MODEL_FLASH
 }
 
-function isMissingStarterContext(text) {
-  const normalized = toText(text).trim()
-  if (!normalized) {
-    return true
-  }
-
-  if (normalized.length < 60) {
-    return true
-  }
-
-  return !STARTER_CONTEXT_KEYWORDS.test(normalized)
+function normalizeRoadmapField(value) {
+  return toText(value).replace(/\s+/g, ' ').trim()
 }
 
-function getStageOneStarterFallback(language) {
-  const normalizedLanguage = sanitizeLanguage(language)
-  if (normalizedLanguage && STAGE_ONE_STARTER_FALLBACKS[normalizedLanguage]) {
-    return STAGE_ONE_STARTER_FALLBACKS[normalizedLanguage]
-  }
-
-  return STAGE_ONE_STARTER_FALLBACKS.default
+function buildRoadmapHintFallback(title, description) {
+  const focus = firstSentence(description, title) || title
+  return `Implement one small part of "${focus}" first, then run a quick manual check before moving to the next part.`
 }
 
-function normalizeTaskWithStarterFallback(task, index) {
-  const title = toText(task.title) || `Task ${index + 1}`
-  const description = toText(task.description)
-  const hint = toText(task.hint)
-  const exampleOutput = toText(task.exampleOutput)
-  const lockedLanguage = sanitizeLanguage(task.language)
+function buildRoadmapExampleFallback(title, description) {
+  const focus = firstSentence(description, title) || title
+  return `Expected result: a concrete behavior that shows "${focus}" works for at least one sample input/output case.`
+}
 
-  if (index !== 0) {
-    return {
-      id: task.id || `ai-task-${index + 1}`,
-      title,
-      description,
-      hint,
-      exampleOutput,
-      language: lockedLanguage,
-      completed: false,
-      task_index: index,
-    }
-  }
-
-  const fallback = getStageOneStarterFallback(lockedLanguage)
+function normalizeRoadmapTask(task, index) {
+  const rawTitle = normalizeRoadmapField(task?.title)
+  const rawDescription = normalizeRoadmapField(task?.description)
+  const titleFromDescription = firstSentence(rawDescription, '')
+    .replace(/[.!?]+$/, '')
+    .trim()
+  const title = rawTitle || titleFromDescription || `Task ${index + 1}`
+  const description =
+    rawDescription ||
+    `Focus this step on "${title}" with one clear implementation goal and one validation check.`
+  const rawHint = normalizeRoadmapField(task?.hint)
+  const hint = rawHint || buildRoadmapHintFallback(title, description)
+  const rawExampleOutput = normalizeRoadmapField(task?.exampleOutput)
+  const exampleOutput =
+    rawExampleOutput || buildRoadmapExampleFallback(title, description)
+  const language = sanitizeLanguage(task?.language)
 
   return {
-    id: task.id || `ai-task-${index + 1}`,
+    id: toText(task?.id).trim() || `ai-task-${index + 1}`,
     title,
-    description: isMissingStarterContext(description)
-      ? fallback.description
-      : description,
-    hint: isMissingStarterContext(hint) ? fallback.hint : hint,
+    description,
+    hint,
     exampleOutput,
-    language: lockedLanguage,
+    language,
     completed: false,
     task_index: index,
   }
@@ -613,80 +744,87 @@ function normalizeRoadmapGenerationPayload(parsed) {
     throw new Error('Roadmap response must include a tasks array.')
   }
 
-  if (parsed.tasks.length !== 6) {
-    throw new Error('Roadmap must contain exactly 6 tasks.')
+  if (parsed.tasks.length < MIN_ROADMAP_TASKS) {
+    throw new Error(`Roadmap must contain at least ${MIN_ROADMAP_TASKS} tasks.`)
   }
+
+  const normalizedTaskSource = parsed.tasks.slice(0, MAX_ROADMAP_TASKS)
+  const roadmapTasks = normalizedTaskSource.map((task, index) =>
+    normalizeRoadmapTask(task, index),
+  )
 
   return {
     skillLevel: normalizeProjectSkillLevel(parsed.skillLevel),
-    tasks: parsed.tasks.map((task, index) => normalizeTaskWithStarterFallback(task, index)),
+    tasks: roadmapTasks,
   }
 }
 
-export function buildFallbackRoadmap(projectDescription, clarifyingAnswers) {
-  const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
-  const fallbackSkillLevel = normalizeProjectSkillLevel(normalizedAnswers.skillLevelPreference)
-  const projectLabel = compactText(projectDescription, 96) || 'your coding project'
+function extractProjectFocusKeywords(projectDescription, maxKeywords = 3) {
+  const words = toText(projectDescription)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 2 && !ROADMAP_FALLBACK_STOPWORDS.has(word))
 
-  const fallbackTasks = [
-    {
-      id: 'ai-task-1',
-      title: 'Set up the project foundation',
-      description: `Initialize the base structure for ${projectLabel}. Create the first files/folders and confirm your entry point can run before adding feature logic.`,
-      hint: 'Use one startup command, create your entry file, and run it once to verify setup.',
-      exampleOutput: '',
-      language: '',
-    },
-    {
-      id: 'ai-task-2',
-      title: 'Define core data and flow',
-      description:
-        'Identify the core data your app needs and map the smallest end-to-end user flow. Focus on one clear path that proves the project concept.',
-      hint: 'Write down the key inputs, outputs, and state changes for one happy-path flow.',
-      exampleOutput: '',
-      language: '',
-    },
-    {
-      id: 'ai-task-3',
-      title: 'Implement the first MVP feature',
-      description:
-        'Build one primary feature from the core flow and get it working with simple test data. Keep the implementation narrow and iterative.',
-      hint: 'Start with basic behavior first, then verify it manually with a quick check.',
-      exampleOutput: '',
-      language: '',
-    },
-    {
-      id: 'ai-task-4',
-      title: 'Add the second key capability',
-      description:
-        'Implement the next most important capability that makes the project useful in practice. Reuse existing structure rather than rewriting from scratch.',
-      hint: 'Add this in small slices and validate each slice before moving forward.',
-      exampleOutput: '',
-      language: '',
-    },
-    {
-      id: 'ai-task-5',
-      title: 'Handle errors and edge cases',
-      description:
-        'Improve reliability by adding validation, error handling, and edge-case coverage for your main flows. Make failures visible and understandable.',
-      hint: 'Test empty, invalid, and boundary inputs to confirm safe behavior.',
-      exampleOutput: '',
-      language: '',
-    },
-    {
-      id: 'ai-task-6',
-      title: 'Finalize and verify',
-      description:
-        'Review the full workflow, polish naming/structure, and verify the MVP can be demonstrated end to end. Capture short notes on what to build next.',
-      hint: 'Run through the complete flow once as if you are the user and note any rough spots.',
-      exampleOutput: '',
-      language: '',
-    },
-  ]
+  return Array.from(new Set(words)).slice(0, maxKeywords)
+}
+
+function buildLocalProjectSpecificRoadmap(projectDescription, clarifyingAnswers) {
+  const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
+  const resolvedSkillLevel = normalizeProjectSkillLevel(normalizedAnswers.skillLevelPreference)
+  const projectLabel = firstSentence(projectDescription, 'your project')
+  const keywords = extractProjectFocusKeywords(projectDescription)
+  const keywordLabel = keywords.length > 0 ? keywords.join(' ') : 'core functionality'
 
   return normalizeRoadmapGenerationPayload({
-    skillLevel: fallbackSkillLevel,
-    tasks: fallbackTasks,
+    skillLevel: resolvedSkillLevel,
+    tasks: [
+      {
+        id: 'ai-task-1',
+        title: `Define ${projectLabel} MVP behavior`,
+        description:
+          `List the exact user flow and expected outcomes for "${projectLabel}", including one happy path and one edge case.`,
+        hint: `Write 3-5 acceptance checks that prove the ${keywordLabel} flow works.`,
+        exampleOutput: 'Expected result: clear success criteria for the first MVP slice.',
+        language: '',
+      },
+      {
+        id: 'ai-task-2',
+        title: `Set up the initial ${projectLabel} structure`,
+        description:
+          `Create the minimal file/module structure needed to ship the first working version of "${projectLabel}".`,
+        hint: `Keep setup lean and focused on enabling the first end-to-end flow.`,
+        exampleOutput: 'Expected result: project runs with placeholder wiring for core flow.',
+        language: '',
+      },
+      {
+        id: 'ai-task-3',
+        title: `Implement core ${keywordLabel} logic`,
+        description:
+          `Build the main logic layer for "${projectLabel}" so the primary user interaction produces the right result.`,
+        hint: 'Implement one small behavior at a time and verify each with a quick manual check.',
+        exampleOutput: 'Expected result: primary interaction works for at least one realistic input.',
+        language: '',
+      },
+      {
+        id: 'ai-task-4',
+        title: `Connect interaction flow and state updates`,
+        description:
+          `Wire UI/input events to the underlying logic so "${projectLabel}" behaves consistently through the full MVP path.`,
+        hint: 'Trace one complete user journey step-by-step and confirm each state transition.',
+        exampleOutput: 'Expected result: user can complete the MVP flow without broken transitions.',
+        language: '',
+      },
+      {
+        id: 'ai-task-5',
+        title: `Harden and verify ${projectLabel}`,
+        description:
+          `Add validation and error handling for key edge cases, then run a final end-to-end verification pass.`,
+        hint: 'Test invalid/boundary input cases and confirm the app fails safely with clear feedback.',
+        exampleOutput: 'Expected result: stable MVP behavior with basic edge-case coverage.',
+        language: '',
+      },
+    ],
   })
 }
 
@@ -697,25 +835,31 @@ function parseRoadmapGenerationResultStrict(text) {
 
 export function parseRoadmapGenerationResultLenient(text) {
   const source = cleanJsonString(text)
-  const titles = extractLooseJsonFieldValues(source, 'title', 'description')
-  const descriptions = extractLooseJsonFieldValues(source, 'description', 'hint')
-  const hints = extractLooseJsonFieldValues(source, 'hint', 'exampleOutput')
-  const exampleOutputs = extractLooseJsonFieldValues(source, 'exampleOutput', 'language')
-  const languages = extractLooseJsonFieldValues(source, 'language')
-  const ids = extractLooseJsonFieldValues(source, 'id', 'title')
+  const titles = extractTaskFieldValues(source, 'title', 'description')
+  const descriptions = extractTaskFieldValues(source, 'description', 'hint')
+  const hints = extractTaskFieldValues(source, 'hint', 'exampleOutput')
+  const exampleOutputs = extractTaskFieldValues(source, 'exampleOutput', 'language')
+  const languages = extractTaskFieldValues(source, 'language')
+  const ids = extractTaskFieldValues(source, 'id', 'title')
 
-  const taskCount = Math.min(titles.length, descriptions.length, hints.length)
-  if (taskCount !== 6) {
+  const taskCount = Math.max(
+    titles.length,
+    descriptions.length,
+    hints.length,
+    exampleOutputs.length,
+  )
+  if (taskCount < MIN_ROADMAP_TASKS) {
     throw new Error('Roadmap response was malformed and could not be recovered.')
   }
+  const normalizedTaskCount = Math.min(taskCount, MAX_ROADMAP_TASKS)
 
   const skillLevelMatch =
-    source.match(/"skillLevel"\s*:\s*"(beginner|intermediate|advanced|master|hard)"/i) ||
+    source.match(/"skill[_-]?level"\s*:\s*"(beginner|intermediate|advanced|master|hard)"/i) ||
     source.match(/\b(beginner|intermediate|advanced|master|hard)\b/i)
   const rawSkillLevel = toText(skillLevelMatch?.[1]).trim().toLowerCase()
   const normalizedSkillLevel = normalizeModelSkillLevel(rawSkillLevel) || rawSkillLevel
 
-  const recoveredTasks = Array.from({ length: taskCount }, (_, index) => ({
+  const recoveredTasks = Array.from({ length: normalizedTaskCount }, (_, index) => ({
     id: ids[index] || `ai-task-${index + 1}`,
     title: titles[index] || `Task ${index + 1}`,
     description: descriptions[index] || '',
@@ -742,6 +886,150 @@ export function parseRoadmapGenerationResult(text) {
   }
 }
 
+function extractRoadmapOutlineEntries(text) {
+  const source = cleanJsonString(text)
+  const lines = source.split('\n')
+  const entries = []
+  const seen = new Set()
+  const bulletRegex = /^\s*(?:\d+\s*[).:-]|[-*•])\s+(.+)$/
+  let current = ''
+
+  const pushEntry = (value) => {
+    const collapsed = collapseText(value)
+    if (collapsed.length < 8) {
+      return
+    }
+
+    const key = collapsed.toLowerCase()
+    if (seen.has(key)) {
+      return
+    }
+
+    seen.add(key)
+    entries.push(collapsed)
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      continue
+    }
+
+    const bulletMatch = trimmed.match(bulletRegex)
+    if (bulletMatch?.[1]) {
+      if (current) {
+        pushEntry(current)
+      }
+      current = bulletMatch[1]
+      continue
+    }
+
+    if (
+      current &&
+      !trimmed.startsWith('{') &&
+      !trimmed.startsWith('}') &&
+      !trimmed.startsWith('[') &&
+      !trimmed.startsWith(']') &&
+      !trimmed.startsWith('"')
+    ) {
+      current = `${current} ${trimmed}`
+    }
+  }
+
+  if (current) {
+    pushEntry(current)
+  }
+
+  if (entries.length >= MIN_ROADMAP_TASKS) {
+    return entries
+  }
+
+  const paragraphBlocks = source.split(/\n\s*\n/)
+  for (const block of paragraphBlocks) {
+    const collapsed = collapseText(block)
+    if (collapsed.length < 24 || collapsed.length > 360) {
+      continue
+    }
+    if (/[{}[\]]/.test(collapsed)) {
+      continue
+    }
+    pushEntry(collapsed)
+    if (entries.length >= MIN_ROADMAP_TASKS) {
+      break
+    }
+  }
+
+  return entries
+}
+
+function splitRoadmapOutlineEntry(entry, index) {
+  const normalizedEntry = collapseText(entry).replace(/^task\s*\d+\s*[:.-]\s*/i, '')
+  let title = ''
+  let description = ''
+
+  const separatorIndex = normalizedEntry.indexOf(':')
+  if (separatorIndex > 1) {
+    const before = normalizedEntry.slice(0, separatorIndex).trim()
+    const after = normalizedEntry.slice(separatorIndex + 1).trim()
+    if (before.split(/\s+/).length <= 12 && after.length > 0) {
+      title = before
+      description = after
+    }
+  }
+
+  if (!title) {
+    const sentenceTitle = firstSentence(normalizedEntry, '')
+      .replace(/[.!?]+$/, '')
+      .trim()
+    if (sentenceTitle && sentenceTitle.split(/\s+/).length <= 14) {
+      title = sentenceTitle
+    }
+  }
+
+  if (!title) {
+    title = normalizedEntry.split(/\s+/).filter(Boolean).slice(0, 10).join(' ')
+  }
+
+  if (!description) {
+    description = normalizedEntry
+  }
+
+  return {
+    id: `ai-task-${index + 1}`,
+    title,
+    description,
+    hint: '',
+    exampleOutput: '',
+    language: '',
+  }
+}
+
+export function parseRoadmapFromOutlineText(text, preferredSkillLevel = '') {
+  const entries = extractRoadmapOutlineEntries(text)
+  if (entries.length < MIN_ROADMAP_TASKS) {
+    throw new Error('Roadmap outline recovery failed due to insufficient task entries.')
+  }
+
+  const source = cleanJsonString(text)
+  const skillLevelMatch = source.match(/\b(beginner|intermediate|advanced|master|hard)\b/i)
+  const rawMatchedSkillLevel = toText(skillLevelMatch?.[1]).trim().toLowerCase()
+  const normalizedMatchedSkillLevel = normalizeModelSkillLevel(rawMatchedSkillLevel)
+  const normalizedPreferredSkillLevel = normalizeModelSkillLevel(preferredSkillLevel)
+  const resolvedSkillLevel =
+    normalizedMatchedSkillLevel ||
+    normalizedPreferredSkillLevel ||
+    normalizeProjectSkillLevel(preferredSkillLevel)
+
+  const tasks = entries
+    .slice(0, MAX_ROADMAP_TASKS)
+    .map((entry, index) => splitRoadmapOutlineEntry(entry, index))
+
+  return normalizeRoadmapGenerationPayload({
+    skillLevel: resolvedSkillLevel,
+    tasks,
+  })
+}
+
 async function callGemini(prompt, options = {}) {
   const {
     temperature = 0.5,
@@ -750,6 +1038,7 @@ async function callGemini(prompt, options = {}) {
     responseMimeType = null,
     responseSchema = null,
     retryCount = 0,
+    timeoutMs = TIMEOUT_MS,
   } = options
 
   if (!GEMINI_API_KEY) {
@@ -773,7 +1062,7 @@ async function callGemini(prompt, options = {}) {
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS)
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
 
     try {
       const response = await fetch(
@@ -837,7 +1126,9 @@ async function callGemini(prompt, options = {}) {
   if (lastError?.name === 'AbortError') {
     return {
       data: null,
-      error: new Error('Request timed out after 15 seconds. Please try again.'),
+      error: new Error(
+        `Request timed out after ${Math.max(1, Math.round(timeoutMs / 1000))} seconds. Please try again.`,
+      ),
     }
   }
 
@@ -864,14 +1155,11 @@ Allowed skill levels: beginner, intermediate, advanced, master.
 Use selected skill level preference as the target skillLevel unless it clearly conflicts with project scope.
 Always tailor the roadmap tasks intelligently based on project complexity and clarifying context.
 
-Generate a learning roadmap as exactly 6 tasks.
+Generate a learning roadmap as 4 to 10 tasks.
 Each task guides the user to implement one specific piece of the project themselves.
 Never give complete code solutions in the description or hint fields.
-Special Stage 1 requirement:
-- Task 1 must explain how to start from zero.
-- Task 1 must include at least one practical starter cue: command(s), file/folder structure, or first entry point setup.
-- Task 1 should name the first concrete action the learner can execute immediately.
-- Keep Stage 1 guidance instructional and partial, never full solution code.
+Do not use generic phase-only titles such as Initialize, Define, Implement, Connect, Harden, or Verify.
+Each task title/description/hint/exampleOutput must be specific to this project goal.
 
 Return ONLY a valid raw JSON object. No markdown, no backticks, no explanation.
 Schema:
@@ -882,6 +1170,67 @@ Schema:
 The language field must be one of: javascript, typescript, python, html, sql, java, csharp, go, rust, ruby, php, swift, kotlin.
 Use language only as a task-level lock when clearly appropriate.
 The exampleOutput field may contain code as it is shown only when explicitly requested.`
+}
+
+function buildRoadmapRepairPrompt(
+  projectDescription,
+  clarifyingAnswers,
+  profileContext,
+  previousOutput,
+  failureReason,
+) {
+  const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
+  const profileBlock = buildProfilePromptBlock(profileContext)
+
+  return `You are fixing a failed roadmap response into strict JSON.
+
+Project goal: ${toText(projectDescription)}
+Selected skill level preference: ${normalizedAnswers.skillLevelPreference}
+Prior experience: ${normalizedAnswers.experience}
+MVP scope: ${normalizedAnswers.scope}
+Weekly pace: ${normalizedAnswers.time}
+
+${profileBlock}
+
+Failure reason:
+${truncateText(failureReason, 500)}
+
+Previous output to repair:
+${truncateText(previousOutput, 5000)}
+
+Repair requirements:
+- Return only one valid JSON object with keys: skillLevel and tasks.
+- tasks must contain ${MIN_ROADMAP_TASKS} to ${MAX_ROADMAP_TASKS} items.
+- Every task must include id, title, description, hint, exampleOutput, language.
+- Make each task specific to this exact project goal and MVP scope.
+- Never use generic phase titles like Initialize, Define, Implement, Connect, Harden, Verify.
+- Never return full working code solutions.
+
+Return ONLY JSON. No markdown.`
+}
+
+function buildRoadmapOutlinePrompt(projectDescription, clarifyingAnswers, profileContext) {
+  const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
+  const profileBlock = buildProfilePromptBlock(profileContext)
+
+  return `You are a coding mentor.
+Project goal: ${toText(projectDescription)}
+Selected skill level preference: ${normalizedAnswers.skillLevelPreference}
+Experience: ${normalizedAnswers.experience}
+MVP scope: ${normalizedAnswers.scope}
+Weekly pace: ${normalizedAnswers.time}
+
+${profileBlock}
+
+Return exactly 5 numbered lines.
+Each line must be one project-specific task in this format:
+1. Task title: one-sentence task description
+
+Rules:
+- Keep every line specific to this exact project.
+- Do not use generic phase words like Initialize, Define, Implement, Connect, Harden, Verify.
+- No markdown blocks. No JSON.
+- Do not include full code solutions.`
 }
 
 export function buildProjectTitlePrompt(projectDescription) {
@@ -968,52 +1317,164 @@ No markdown. No extra keys.`
 
 export function useGemini() {
   const generateRoadmap = useCallback(async (projectDescription, clarifyingAnswers, profileContext = null) => {
-    const basePrompt = buildRoadmapPrompt(
-      projectDescription,
-      clarifyingAnswers,
-      profileContext,
-    )
     const model = selectGeminiModel(clarifyingAnswers?.skillLevelPreference)
+    const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
 
-    const firstAttempt = await callGemini(basePrompt, {
-      temperature: 0.7,
-      maxOutputTokens: 1024,
-      model,
-      responseMimeType: 'application/json',
-      responseSchema: ROADMAP_RESPONSE_SCHEMA,
-      retryCount: 1,
-    })
-    if (firstAttempt.error) {
-      return { data: null, error: firstAttempt.error }
+    const callRoadmapAttempt = async (prompt, options = {}) => {
+      const useJsonSchema = options.useJsonSchema !== false
+
+      const requestOptions = {
+        temperature: options.temperature,
+        maxOutputTokens: options.maxOutputTokens,
+        model,
+        retryCount: 0,
+        timeoutMs: ROADMAP_ATTEMPT_TIMEOUT_MS,
+      }
+
+      if (useJsonSchema) {
+        requestOptions.responseMimeType = 'application/json'
+        requestOptions.responseSchema = ROADMAP_RESPONSE_SCHEMA
+      }
+
+      return callGemini(prompt, requestOptions)
     }
 
     try {
-      const roadmap = parseRoadmapGenerationResult(firstAttempt.data)
-      return { data: roadmap, error: null }
-    } catch {
-      const retryPrompt = `${basePrompt}\nYou must return only raw JSON matching the schema exactly.`
-      const secondAttempt = await callGemini(retryPrompt, {
-        temperature: 0.7,
-        maxOutputTokens: 1024,
-        model,
-        responseMimeType: 'application/json',
-        responseSchema: ROADMAP_RESPONSE_SCHEMA,
-        retryCount: 1,
-      })
+      const parseRoadmapCandidate = (responseText) => {
+        let parseError = null
 
-      if (secondAttempt.error) {
-        return { data: null, error: secondAttempt.error }
+        try {
+          const roadmap = parseRoadmapGenerationResult(responseText)
+          if (shouldAutoRepairRoadmapTasks(roadmap?.tasks)) {
+            throw new Error('Roadmap output was generic and needs project-specific task rewriting.')
+          }
+          return roadmap
+        } catch (error) {
+          parseError = error
+        }
+
+        try {
+          const recoveredRoadmap = parseRoadmapFromOutlineText(
+            responseText,
+            normalizedAnswers.skillLevelPreference,
+          )
+          if (shouldAutoRepairRoadmapTasks(recoveredRoadmap?.tasks)) {
+            throw new Error('Outline recovery produced a generic roadmap.')
+          }
+          return recoveredRoadmap
+        } catch (outlineError) {
+          throw new Error(
+            `${parseError?.message || 'Roadmap parse failed.'} Outline recovery failed: ${outlineError?.message || 'Unknown issue.'}`,
+          )
+        }
+      }
+
+      const basePrompt = buildRoadmapPrompt(
+        projectDescription,
+        clarifyingAnswers,
+        profileContext,
+      )
+      const firstAttempt = await callRoadmapAttempt(basePrompt, {
+        temperature: 0.55,
+        maxOutputTokens: 1200,
+      })
+      if (firstAttempt.error) {
+        return {
+          data: null,
+          error: firstAttempt.error,
+        }
       }
 
       try {
-        const roadmap = parseRoadmapGenerationResult(secondAttempt.data)
+        const roadmap = parseRoadmapCandidate(firstAttempt.data)
         return { data: roadmap, error: null }
-      } catch (error) {
-        console.warn('Roadmap parsing failed after retry. Falling back to local roadmap.', error)
-        return {
-          data: buildFallbackRoadmap(projectDescription, clarifyingAnswers),
-          error: null,
+      } catch (firstParseError) {
+        const retryPrompt = `${basePrompt}
+You must return only raw JSON matching the schema exactly.
+Do not use generic phase titles (Initialize, Define, Implement, Connect, Harden, Verify).
+Every task must be specific to this project and MVP scope.`
+        const secondAttempt = await callRoadmapAttempt(retryPrompt, {
+          temperature: 0.35,
+          maxOutputTokens: 1200,
+        })
+
+        if (secondAttempt.error) {
+          return {
+            data: null,
+            error: secondAttempt.error,
+          }
         }
+
+        try {
+          const roadmap = parseRoadmapCandidate(secondAttempt.data)
+          return { data: roadmap, error: null }
+        } catch (secondParseError) {
+          const repairPrompt = buildRoadmapRepairPrompt(
+            projectDescription,
+            clarifyingAnswers,
+            profileContext,
+            secondAttempt.data || firstAttempt.data,
+            secondParseError?.message || firstParseError?.message,
+          )
+          const repairAttempt = await callRoadmapAttempt(repairPrompt, {
+            temperature: 0.25,
+            maxOutputTokens: 1000,
+          })
+
+          if (repairAttempt.error) {
+            return {
+              data: null,
+              error: repairAttempt.error,
+            }
+          }
+
+          try {
+            const roadmap = parseRoadmapCandidate(repairAttempt.data)
+            return { data: roadmap, error: null }
+          } catch {
+            const outlinePrompt = buildRoadmapOutlinePrompt(
+              projectDescription,
+              clarifyingAnswers,
+              profileContext,
+            )
+            const outlineAttempt = await callRoadmapAttempt(outlinePrompt, {
+              temperature: 0.2,
+              maxOutputTokens: 320,
+              useJsonSchema: false,
+            })
+
+            if (!outlineAttempt.error) {
+              try {
+                const outlineRoadmap = parseRoadmapFromOutlineText(
+                  outlineAttempt.data,
+                  clarifyingAnswers?.skillLevelPreference,
+                )
+                if (shouldAutoRepairRoadmapTasks(outlineRoadmap?.tasks)) {
+                  throw new Error('Outline fallback produced a generic roadmap.')
+                }
+                return { data: outlineRoadmap, error: null }
+              } catch {
+                // Continue to local fallback roadmap if outline parsing fails.
+              }
+            }
+
+            const localFallback = buildLocalProjectSpecificRoadmap(
+              projectDescription,
+              clarifyingAnswers,
+            )
+            return {
+              data: localFallback,
+              error: null,
+            }
+          }
+        }
+      }
+    } catch (error) {
+      const message =
+        toText(error?.message).trim() || 'Roadmap generation failed due to an unexpected issue.'
+      return {
+        data: null,
+        error: new Error(message),
       }
     }
   }, [])
@@ -1119,6 +1580,7 @@ export function useGemini() {
         profileContext,
       })
       const model = selectGeminiModel(skillLevel)
+      const casualCheckIn = isLikelyCasualCheckIn(userQuestion)
 
       const result = await callGemini(prompt, {
         temperature: 0.4,
@@ -1129,7 +1591,42 @@ export function useGemini() {
         return { data: null, error: result.error }
       }
 
-      return { data: result.data, error: null }
+      const firstResponse = toText(result.data).trim()
+      if (!firstResponse) {
+        return {
+          data: buildDeterministicFollowUpFallback(task, userQuestion, skillLevel),
+          error: null,
+        }
+      }
+
+      if (casualCheckIn || !isLowQualityMentorResponse(firstResponse, userQuestion)) {
+        return { data: firstResponse, error: null }
+      }
+
+      const strictRetryPrompt = `${prompt}
+Additional mandatory quality checks:
+- Provide one concrete next action the learner can do immediately.
+- Tie that action to the current task title/description or current code context.
+- Never answer with tautologies like "do that" or "keep doing this".
+- Keep guidance specific, practical, and testable.`
+
+      const retryResult = await callGemini(strictRetryPrompt, {
+        temperature: 0.2,
+        maxOutputTokens: 360,
+        model,
+      })
+
+      if (!retryResult.error) {
+        const retryResponse = toText(retryResult.data).trim()
+        if (retryResponse && !isLowQualityMentorResponse(retryResponse, userQuestion)) {
+          return { data: retryResponse, error: null }
+        }
+      }
+
+      return {
+        data: buildDeterministicFollowUpFallback(task, userQuestion, skillLevel),
+        error: null,
+      }
     },
     [],
   )

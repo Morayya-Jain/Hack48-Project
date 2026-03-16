@@ -1,15 +1,57 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildFallbackRoadmap,
   buildCodeCheckPrompt,
+  getGeminiText,
   buildProjectTitlePrompt,
   buildRoadmapPrompt,
   normalizeClarifyingAnswers,
+  parseRoadmapFromOutlineText,
   parseRoadmapGenerationResult,
   parseRoadmapGenerationResultLenient,
   selectGeminiModel,
 } from '../src/hooks/useGemini.js'
+
+test('getGeminiText concatenates multipart Gemini responses', () => {
+  const data = {
+    candidates: [
+      {
+        content: {
+          parts: [
+            { text: '{ "skillLevel": "intermediate", "tasks": [' },
+            { text: '{"title":"Task 1"}' },
+            { text: '] }' },
+          ],
+        },
+      },
+    ],
+  }
+
+  const text = getGeminiText(data)
+  assert.equal(text, '{ "skillLevel": "intermediate", "tasks": [{"title":"Task 1"}] }')
+})
+
+test('getGeminiText prefers a complete later candidate when the first is truncated', () => {
+  const data = {
+    candidates: [
+      {
+        finishReason: 'MAX_TOKENS',
+        content: {
+          parts: [{ text: '{"skillLevel":"intermediate","tasks":[{"title":"Truncated' }],
+        },
+      },
+      {
+        finishReason: 'STOP',
+        content: {
+          parts: [{ text: '{"skillLevel":"intermediate","tasks":[{"title":"Complete"}]}' }],
+        },
+      },
+    ],
+  }
+
+  const text = getGeminiText(data)
+  assert.equal(text, '{"skillLevel":"intermediate","tasks":[{"title":"Complete"}]}')
+})
 
 function buildTask(index) {
   return {
@@ -22,16 +64,16 @@ function buildTask(index) {
   }
 }
 
-function buildMalformedRoadmapPayload() {
-  const tasks = Array.from({ length: 6 }, (_, index) => {
+function buildMalformedRoadmapPayload(taskCount = 5) {
+  const tasks = Array.from({ length: taskCount }, (_, index) => {
     const taskNumber = index + 1
     const description =
       index === 0
-        ? 'Open the terminal and run "npm init -y"\nThen create src/main.js and verify it runs.'
+        ? 'Open terminal and run "npm init -y" then create src/main.js.'
         : `Description ${taskNumber}`
     const hint =
       index === 0
-        ? 'Run "node src/main.js" from your terminal after setup, then confirm the starter output before moving on.'
+        ? 'Run "node src/main.js" once to verify setup before coding features.'
         : `Hint ${taskNumber}`
 
     return `{
@@ -76,22 +118,33 @@ test('normalizeClarifyingAnswers keeps valid skill preference and normalizes inv
   )
 })
 
-test('parseRoadmapGenerationResult parses a valid roadmap payload', () => {
+test('parseRoadmapGenerationResult parses valid dynamic roadmap payload (5 tasks)', () => {
   const input = JSON.stringify({
     skillLevel: 'advanced',
-    tasks: Array.from({ length: 6 }, (_, index) => buildTask(index)),
+    tasks: Array.from({ length: 5 }, (_, index) => buildTask(index)),
   })
 
   const parsed = parseRoadmapGenerationResult(input)
   assert.equal(parsed.skillLevel, 'advanced')
-  assert.equal(parsed.tasks.length, 6)
+  assert.equal(parsed.tasks.length, 5)
   assert.equal(parsed.tasks[0].task_index, 0)
+})
+
+test('parseRoadmapGenerationResult preserves all tasks within allowed range', () => {
+  const input = JSON.stringify({
+    skillLevel: 'beginner',
+    tasks: Array.from({ length: 8 }, (_, index) => buildTask(index)),
+  })
+
+  const parsed = parseRoadmapGenerationResult(input)
+  assert.equal(parsed.tasks.length, 8)
+  assert.equal(parsed.tasks[7].id, 'task-8')
 })
 
 test('parseRoadmapGenerationResult preserves master skill level', () => {
   const input = JSON.stringify({
     skillLevel: 'master',
-    tasks: Array.from({ length: 6 }, (_, index) => buildTask(index)),
+    tasks: Array.from({ length: 4 }, (_, index) => buildTask(index)),
   })
 
   const parsed = parseRoadmapGenerationResult(input)
@@ -101,29 +154,41 @@ test('parseRoadmapGenerationResult preserves master skill level', () => {
 test('parseRoadmapGenerationResult falls back to intermediate for invalid skill level', () => {
   const input = JSON.stringify({
     skillLevel: 'expert-plus',
-    tasks: Array.from({ length: 6 }, (_, index) => buildTask(index)),
+    tasks: Array.from({ length: 5 }, (_, index) => buildTask(index)),
   })
 
   const parsed = parseRoadmapGenerationResult(input)
   assert.equal(parsed.skillLevel, 'intermediate')
 })
 
-test('parseRoadmapGenerationResult throws when task count is not exactly 6', () => {
+test('parseRoadmapGenerationResult throws when task count is below minimum', () => {
   const input = JSON.stringify({
     skillLevel: 'beginner',
-    tasks: [buildTask(0)],
+    tasks: Array.from({ length: 3 }, (_, index) => buildTask(index)),
   })
 
-  assert.throws(() => parseRoadmapGenerationResult(input), /exactly 6 tasks/i)
+  assert.throws(() => parseRoadmapGenerationResult(input), /at least 4 tasks/i)
 })
 
-test('parseRoadmapGenerationResult injects Stage 1 starter fallback when context is missing', () => {
-  const tasks = Array.from({ length: 6 }, (_, index) => buildTask(index))
+test('parseRoadmapGenerationResult trims over-generated tasks to max allowed count', () => {
+  const input = JSON.stringify({
+    skillLevel: 'beginner',
+    tasks: Array.from({ length: 11 }, (_, index) => buildTask(index)),
+  })
+
+  const parsed = parseRoadmapGenerationResult(input)
+  assert.equal(parsed.tasks.length, 10)
+  assert.equal(parsed.tasks[9].id, 'task-10')
+})
+
+test('parseRoadmapGenerationResult keeps first task text as-is without setup rewriting', () => {
+  const tasks = Array.from({ length: 5 }, (_, index) => buildTask(index))
   tasks[0] = {
     ...tasks[0],
-    description: '',
-    hint: 'Try coding.',
-    language: 'javascript',
+    title: 'Define calculator arithmetic behavior',
+    description: 'Define expected behavior for +, -, *, and / with clear examples.',
+    hint: 'Write three sample inputs and expected outputs before implementation.',
+    exampleOutput: '2 + 2 -> 4, 9 / 3 -> 3',
   }
 
   const input = JSON.stringify({
@@ -132,61 +197,136 @@ test('parseRoadmapGenerationResult injects Stage 1 starter fallback when context
   })
 
   const parsed = parseRoadmapGenerationResult(input)
-  assert.match(parsed.tasks[0].description, /project skeleton|entry file|setup/i)
-  assert.match(parsed.tasks[0].hint, /terminal|entry file|setup|command/i)
-})
-
-test('parseRoadmapGenerationResult preserves strong Stage 1 guidance', () => {
-  const tasks = Array.from({ length: 6 }, (_, index) => buildTask(index))
-  tasks[0] = {
-    ...tasks[0],
-    description:
-      'Open your terminal, initialize the project folder, create src/main.js, and confirm the entry point runs before adding app features.',
-    hint:
-      'Use a starter command to initialize project metadata, then run the entry file once to verify setup.',
-    language: 'javascript',
-  }
-
-  const input = JSON.stringify({
-    skillLevel: 'beginner',
-    tasks,
-  })
-
-  const parsed = parseRoadmapGenerationResult(input)
+  assert.equal(parsed.tasks[0].title, tasks[0].title)
   assert.equal(parsed.tasks[0].description, tasks[0].description)
   assert.equal(parsed.tasks[0].hint, tasks[0].hint)
 })
 
-test('parseRoadmapGenerationResultLenient recovers malformed roadmap JSON with unescaped quotes', () => {
-  const malformed = buildMalformedRoadmapPayload()
+test('parseRoadmapGenerationResult fills missing hint/exampleOutput with contextual defaults', () => {
+  const tasks = Array.from({ length: 5 }, (_, index) => buildTask(index))
+  tasks[2] = {
+    ...tasks[2],
+    title: 'Implement keypad click handlers',
+    description: 'Wire each calculator button to update the input expression.',
+    hint: ' ',
+    exampleOutput: '',
+  }
+
+  const input = JSON.stringify({
+    skillLevel: 'beginner',
+    tasks,
+  })
+
+  const parsed = parseRoadmapGenerationResult(input)
+  assert.match(parsed.tasks[2].hint, /implement one small part/i)
+  assert.match(parsed.tasks[2].exampleOutput, /Expected result:/i)
+})
+
+test('parseRoadmapGenerationResultLenient recovers malformed roadmap JSON', () => {
+  const malformed = buildMalformedRoadmapPayload(5)
 
   const parsed = parseRoadmapGenerationResultLenient(malformed)
-  assert.equal(parsed.tasks.length, 6)
+  assert.equal(parsed.tasks.length, 5)
   assert.match(parsed.tasks[0].description, /npm init -y/i)
   assert.match(parsed.tasks[0].hint, /node src\/main\.js/i)
 })
 
 test('parseRoadmapGenerationResult falls back to lenient parsing for malformed JSON', () => {
-  const malformed = buildMalformedRoadmapPayload()
+  const malformed = buildMalformedRoadmapPayload(5)
 
   const parsed = parseRoadmapGenerationResult(malformed)
-  assert.equal(parsed.tasks.length, 6)
+  assert.equal(parsed.tasks.length, 5)
   assert.match(parsed.tasks[0].description, /npm init -y/i)
 })
 
-test('buildFallbackRoadmap returns deterministic 6-task roadmap when AI payload is unusable', () => {
-  const parsed = buildFallbackRoadmap('Build a weather dashboard app', {
-    skillLevelPreference: 'advanced',
-  })
+test('parseRoadmapFromOutlineText recovers tasks from numbered non-JSON roadmap', () => {
+  const outline = `
+1. Define calculator operations and expected math behavior.
+2. Build the input expression parser for +, -, *, and /.
+3. Render calculator buttons and display state in the UI.
+4. Wire button clicks to expression updates and equals evaluation.
+5. Handle invalid expressions and divide-by-zero safely.
+`
 
-  assert.equal(parsed.skillLevel, 'advanced')
-  assert.equal(parsed.tasks.length, 6)
-  assert.equal(parsed.tasks[0].task_index, 0)
-  assert.match(parsed.tasks[0].description, /entry point|structure|setup/i)
-  assert.match(parsed.tasks[5].title, /finalize|verify/i)
+  const parsed = parseRoadmapFromOutlineText(outline, 'beginner')
+  assert.equal(parsed.tasks.length, 5)
+  assert.equal(parsed.skillLevel, 'beginner')
+  assert.match(parsed.tasks[0].title, /define calculator operations/i)
+  assert.match(parsed.tasks[0].hint, /implement one small part/i)
 })
 
-test('buildRoadmapPrompt keeps no-solution guard and Stage 1 kickoff constraints', () => {
+test('parseRoadmapFromOutlineText throws when outline has too few recoverable entries', () => {
+  assert.throws(
+    () =>
+      parseRoadmapFromOutlineText(
+        '1. Build calculator.\n2. Add UI.\n3. Test it.',
+        'beginner',
+      ),
+    /outline recovery failed/i,
+  )
+})
+
+test('parseRoadmapGenerationResult parses legacy generic titles without throwing', () => {
+  const input = JSON.stringify({
+    skillLevel: 'beginner',
+    tasks: [
+      {
+        id: 'ai-task-1',
+        title: 'Set up the project foundation',
+        description: 'Create files and folders.',
+        hint: 'Run setup command.',
+        exampleOutput: 'Project starts.',
+        language: '',
+      },
+      {
+        id: 'ai-task-2',
+        title: 'Define core data and flow',
+        description: 'Map app data flow.',
+        hint: 'Write it down.',
+        exampleOutput: 'Data map ready.',
+        language: '',
+      },
+      {
+        id: 'ai-task-3',
+        title: 'Implement the first MVP feature',
+        description: 'Build first feature.',
+        hint: 'Code first feature.',
+        exampleOutput: 'Feature works.',
+        language: '',
+      },
+      {
+        id: 'ai-task-4',
+        title: 'Add the second key capability',
+        description: 'Build next feature.',
+        hint: 'Code next feature.',
+        exampleOutput: 'Second feature works.',
+        language: '',
+      },
+      {
+        id: 'ai-task-5',
+        title: 'Handle errors and edge cases',
+        description: 'Handle edge cases.',
+        hint: 'Test invalid inputs.',
+        exampleOutput: 'Errors handled safely.',
+        language: '',
+      },
+      {
+        id: 'ai-task-6',
+        title: 'Finalize and verify',
+        description: 'Polish and verify.',
+        hint: 'Run final pass.',
+        exampleOutput: 'MVP demo works.',
+        language: '',
+      },
+    ],
+  })
+
+  const parsed = parseRoadmapGenerationResult(input)
+  assert.equal(parsed.tasks.length, 6)
+  assert.equal(parsed.tasks[0].title, 'Set up the project foundation')
+})
+
+test('buildRoadmapPrompt keeps minimal no-solution guardrails and dynamic count contract', () => {
   const prompt = buildRoadmapPrompt(
     'I want to build a notes app',
     {
@@ -198,9 +338,10 @@ test('buildRoadmapPrompt keeps no-solution guard and Stage 1 kickoff constraints
     null,
   )
 
+  assert.match(prompt, /Generate a learning roadmap as 4 to 10 tasks/i)
   assert.match(prompt, /Never give complete code solutions in the description or hint fields/i)
-  assert.match(prompt, /Special Stage 1 requirement/i)
-  assert.match(prompt, /Task 1 must explain how to start from zero/i)
+  assert.match(prompt, /Do not use generic phase-only titles such as Initialize, Define, Implement/i)
+  assert.doesNotMatch(prompt, /Special Stage 1 requirement/i)
   assert.match(prompt, /Allowed skill levels: beginner, intermediate, advanced, master\./i)
   assert.match(prompt, /"skillLevel": "beginner\|intermediate\|advanced\|master"/i)
 })
