@@ -282,11 +282,11 @@ export function isLowQualityMentorResponse(responseText, userQuestion = '') {
     return true
   }
 
-  if (normalizedResponse.length < 40) {
+  if (normalizedResponse.length < 20) {
     return true
   }
 
-  if (!hasActionableFollowUp(normalizedResponse.toLowerCase())) {
+  if (!hasActionableFollowUp(normalizedResponse.toLowerCase()) && normalizedResponse.length < 80) {
     return true
   }
 
@@ -1497,7 +1497,7 @@ export function useGemini() {
 
       const firstAttempt = await callGemini(prompt, {
         temperature: 0.2,
-        maxOutputTokens: 260,
+        maxOutputTokens: 800,
         model,
         responseMimeType: 'application/json',
         responseSchema: CODE_CHECK_RESPONSE_SCHEMA,
@@ -1521,7 +1521,7 @@ export function useGemini() {
         const retryPrompt = `${prompt}\nYou must return only raw JSON matching the schema exactly.`
         const secondAttempt = await callGemini(retryPrompt, {
           temperature: 0.2,
-          maxOutputTokens: 260,
+          maxOutputTokens: 800,
           model,
           responseMimeType: 'application/json',
           responseSchema: CODE_CHECK_RESPONSE_SCHEMA,
@@ -1575,8 +1575,9 @@ export function useGemini() {
 
       const result = await callGemini(prompt, {
         temperature: 0.4,
-        maxOutputTokens: 320,
+        maxOutputTokens: 800,
         model,
+        retryCount: 1,
       })
       if (result.error) {
         return { data: null, error: result.error }
@@ -1585,8 +1586,10 @@ export function useGemini() {
       const firstResponse = toText(result.data).trim()
       if (!firstResponse) {
         return {
-          data: buildDeterministicFollowUpFallback(task, userQuestion, skillLevel),
-          error: null,
+          data: null,
+          error: new Error(
+            'The mentor could not generate a response. Please try again or rephrase your question.',
+          ),
         }
       }
 
@@ -1603,7 +1606,7 @@ Additional mandatory quality checks:
 
       const retryResult = await callGemini(strictRetryPrompt, {
         temperature: 0.2,
-        maxOutputTokens: 360,
+        maxOutputTokens: 800,
         model,
       })
 
@@ -1612,12 +1615,12 @@ Additional mandatory quality checks:
         if (retryResponse && !isLowQualityMentorResponse(retryResponse, userQuestion)) {
           return { data: retryResponse, error: null }
         }
+        if (retryResponse) {
+          return { data: retryResponse, error: null }
+        }
       }
 
-      return {
-        data: buildDeterministicFollowUpFallback(task, userQuestion, skillLevel),
-        error: null,
-      }
+      return { data: firstResponse, error: null }
     },
     [],
   )

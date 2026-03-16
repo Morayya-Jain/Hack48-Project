@@ -19,6 +19,17 @@ Add one click handler for "=" that computes the expression string, updates the d
   assert.equal(isLowQualityMentorResponse(response, 'What should I do next?'), false)
 })
 
+test('isLowQualityMentorResponse accepts longer response without actionable verbs', () => {
+  const response =
+    'The reason your loop is not working is that you are iterating past the array bounds. The array has five elements so valid indices are zero through four.'
+  assert.equal(isLowQualityMentorResponse(response, 'Why is my loop broken?'), false)
+})
+
+test('isLowQualityMentorResponse rejects very short responses', () => {
+  const response = 'Looks good so far'
+  assert.equal(isLowQualityMentorResponse(response, 'How is my code?'), true)
+})
+
 test('buildDeterministicFollowUpFallback provides concrete task-aware guidance', () => {
   const fallback = buildDeterministicFollowUpFallback(
     {
