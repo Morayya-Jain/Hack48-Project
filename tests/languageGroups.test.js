@@ -8,23 +8,19 @@ test('normalizeLanguageGroups preserves valid groups', () => {
   assert.deepEqual(result, [['javascript', 'html'], ['python'], ['java']])
 })
 
-test('normalizeLanguageGroups returns all languages as fallback for empty input', () => {
+test('normalizeLanguageGroups returns minimal fallback for empty input', () => {
   const result = normalizeLanguageGroups([])
-  assert.equal(result.length, 13, 'should return all 13 supported languages')
-  assert.ok(result.every((g) => Array.isArray(g) && g.length === 1), 'fallback groups should be single-element')
-  assert.ok(result.some((g) => g[0] === 'javascript'), 'should include javascript')
-  assert.ok(result.some((g) => g[0] === 'python'), 'should include python')
-  assert.ok(result.some((g) => g[0] === 'html'), 'should include html')
+  assert.deepEqual(result, [['javascript'], ['python']])
 })
 
-test('normalizeLanguageGroups returns all languages as fallback for null input', () => {
+test('normalizeLanguageGroups returns minimal fallback for null input', () => {
   const result = normalizeLanguageGroups(null)
-  assert.equal(result.length, 13)
+  assert.deepEqual(result, [['javascript'], ['python']])
 })
 
-test('normalizeLanguageGroups returns all languages as fallback for non-array input', () => {
+test('normalizeLanguageGroups returns minimal fallback for non-array input', () => {
   const result = normalizeLanguageGroups('javascript')
-  assert.equal(result.length, 13)
+  assert.deepEqual(result, [['javascript'], ['python']])
 })
 
 test('normalizeLanguageGroups strips invalid language IDs', () => {
@@ -57,8 +53,8 @@ test('normalizeLanguageGroups skips non-array group entries', () => {
   assert.deepEqual(result, [['python'], ['java']])
 })
 
-test('normalizeLanguageGroups returns all languages as fallback when all groups become empty', () => {
+test('normalizeLanguageGroups returns minimal fallback when all groups become empty', () => {
   const input = [['fakeLang'], ['anotherFake']]
   const result = normalizeLanguageGroups(input)
-  assert.equal(result.length, 13)
+  assert.deepEqual(result, [['javascript'], ['python']])
 })

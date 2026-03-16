@@ -1216,32 +1216,6 @@ Tailor task complexity to this skill level. Each task must be specific to the pr
   }
 }
 
-const LANGUAGE_SUGGESTION_RESPONSE_SCHEMA = {
-  type: 'OBJECT',
-  properties: {
-    languageGroups: {
-      type: 'ARRAY',
-      items: {
-        type: 'OBJECT',
-        properties: {
-          langs: {
-            type: 'ARRAY',
-            items: {
-              type: 'STRING',
-              enum: [
-                'javascript', 'typescript', 'python', 'html', 'sql',
-                'java', 'csharp', 'go', 'rust', 'ruby', 'php', 'swift', 'kotlin',
-              ],
-            },
-          },
-        },
-        required: ['langs'],
-      },
-    },
-  },
-  required: ['languageGroups'],
-}
-
 export function buildLanguageSuggestionPrompt(projectDescription) {
   return `You are a coding mentor helping a user choose a programming language for their project.
 
@@ -1252,16 +1226,16 @@ CRITICAL: Only suggest languages that are genuinely appropriate for this SPECIFI
 Your task: suggest 2–6 language OPTIONS the user can pick from. Each option is a group of 1–3 languages that naturally work together for this project. The user will pick exactly ONE group.
 
 Domain rules (apply FIRST — these override everything else):
-- Web UI / frontend / website / web page / landing page: ONLY return groups containing html, javascript, and/or typescript. Example: [["html", "javascript"], ["html", "typescript"]]. Do NOT include python, java, go, rust, swift, kotlin, csharp, ruby, php, or sql.
-- Backend API / server / microservice: ONLY return groups from server-appropriate languages. Example: [["python"], ["javascript"], ["typescript"], ["go"], ["java"]]. Add sql to a group ONLY if database work is explicitly mentioned. Do NOT include html or swift.
-- Data / analytics / ML / AI: ONLY return [["python"], ["python", "sql"]]. Optionally add ["javascript"] if a dashboard or visualization is mentioned. Do NOT include java, go, rust, swift, kotlin, csharp.
+- Web UI / frontend / website / web page / landing page: ONLY return groups containing html, javascript, and/or typescript. Example: [["html","javascript"],["html","typescript"]]. Do NOT include python, java, go, rust, swift, kotlin, csharp, ruby, php, or sql.
+- Backend API / server / microservice: ONLY return groups from server-appropriate languages. Example: [["python"],["javascript"],["go"],["java"]]. Add sql to a group ONLY if database work is explicitly mentioned. Do NOT include html or swift.
+- Data / analytics / ML / AI: ONLY return [["python"],["python","sql"]]. Optionally add ["javascript"] if a dashboard or visualization is mentioned. Do NOT include java, go, rust, swift, kotlin, csharp.
 - iOS / macOS native app: ONLY return [["swift"]]. Add ["kotlin"] only if cross-platform is explicitly mentioned.
 - Android native app: ONLY return [["kotlin"]], optionally [["java"]].
-- Full-stack / web app with backend: Return groups like [["html", "javascript"], ["html", "typescript"], ["python"], ["javascript"]]. Mix frontend and backend options as separate groups.
-- General-purpose (calculators, games, CLI tools, algorithms, simulations, utilities): Return 3–6 single-language groups from relevant paradigms. Example: [["python"], ["javascript"], ["java"], ["go"]].
+- Full-stack / web app with backend: Return groups like [["html","javascript"],["html","typescript"],["python"],["javascript"]]. Mix frontend and backend options as separate groups.
+- General-purpose (calculators, games, CLI tools, algorithms, simulations, utilities): Return 3–6 single-language groups from relevant paradigms. Example: [["python"],["javascript"],["java"],["go"]].
 
 Bundling rules:
-- Bundle languages that are typically used TOGETHER in one project into one group (e.g., ["html", "javascript"] for web).
+- Bundle languages that are typically used TOGETHER in one project into one group (e.g., ["html","javascript"] for web).
 - Languages that serve the SAME role (alternatives) must be SEPARATE groups (e.g., ["python"] and ["java"] as separate groups, NOT together).
 - Each group = languages the user would use simultaneously, not choices between them.
 - Keep each group to 1–3 languages maximum.
@@ -1273,7 +1247,7 @@ Constraints:
 - Never include a language that is clearly wrong for the domain.
 - Return ONLY valid raw JSON. No markdown, no backticks, no explanation.
 
-Schema: {"languageGroups": [{"langs": ["lang1", "lang2"]}, {"langs": ["lang3"]}, ...]}`
+Schema: {"languageGroups": [["lang1", "lang2"], ["lang3"], ...]}`
 }
 
 export function buildRoadmapPrompt(projectDescription, clarifyingAnswers, profileContext = null, languages = null) {
@@ -1465,19 +1439,14 @@ Return ONLY raw JSON with this exact schema:
 No markdown. No extra keys.`
 }
 
-// Every supported language as a single-element group — used only when AI completely fails.
-const ALL_LANGUAGE_GROUPS = [
-  ['javascript'], ['typescript'], ['python'], ['html'],
-  ['java'], ['kotlin'], ['csharp'], ['go'], ['rust'],
-  ['ruby'], ['php'], ['swift'], ['sql'],
-]
+// Minimal fallback when AI fails — just two universal options, not a full language dump.
+const FALLBACK_LANGUAGE_GROUPS = [['javascript'], ['python']]
 
 // Validates and sanitizes AI-returned language groups (array of arrays).
-// If the AI returned valid groups, passes them through (just sanitizes).
-// If the AI returned nothing, falls back to showing all languages so the user can pick.
+// Falls back to a minimal set on invalid input — avoids flooding the UI with irrelevant options.
 export function normalizeLanguageGroups(groups) {
   if (!Array.isArray(groups) || groups.length === 0) {
-    return ALL_LANGUAGE_GROUPS
+    return FALLBACK_LANGUAGE_GROUPS
   }
 
   const seen = new Set()
@@ -1495,7 +1464,7 @@ export function normalizeLanguageGroups(groups) {
     normalized.push(cleaned)
   }
 
-  return normalized.length > 0 ? normalized : ALL_LANGUAGE_GROUPS
+  return normalized.length > 0 ? normalized : FALLBACK_LANGUAGE_GROUPS
 }
 
 export function useGemini() {
@@ -1507,7 +1476,6 @@ export function useGemini() {
         maxOutputTokens: 256,
         model: GEMINI_MODEL_FLASH,
         responseMimeType: 'application/json',
-        responseSchema: LANGUAGE_SUGGESTION_RESPONSE_SCHEMA,
         retryCount: 1,
         timeoutMs: 10000,
       })
@@ -1518,7 +1486,7 @@ export function useGemini() {
 
       try {
         const parsed = typeof result.data === 'string' ? JSON.parse(cleanJsonString(result.data)) : result.data
-        const rawGroups = Array.isArray(parsed?.languageGroups) ? parsed.languageGroups : []
+        const rawGroups = Array.isArray(parsed?.languageGroups) ? parsed.languageGroups : Array.isArray(parsed) ? parsed : []
         const groups = rawGroups.map((g) => (Array.isArray(g?.langs) ? g.langs : Array.isArray(g) ? g : []))
         return { data: normalizeLanguageGroups(groups), error: null }
       } catch {
