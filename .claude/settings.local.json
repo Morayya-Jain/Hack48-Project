@@ -20,7 +20,14 @@
       "Bash(npx *)",
       "Bash(git add:*)",
       "Bash(git rm:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "mcp__mcp-registry__search_mcp_registry",
+      "Bash(grep -n \"buildLocalProjectSpecificRoadmap\\\\|buildRoadmapPrompt\\\\|parseRoadmapFromOutlineText\" /Users/morayyajain/Developer/Hack48-Project/src/lib/*.js)",
+      "Bash(export PATH=\"/usr/local/bin:/opt/homebrew/bin:$PATH\")"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
 }

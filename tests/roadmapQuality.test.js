@@ -5,6 +5,7 @@ import {
   hasRoadmapRepairAttempted,
   isDeterministicRoadmapPattern,
   isKnownGenericRoadmapTasks,
+  isLikelyGenericRoadmap,
   markRoadmapRepairAttempted,
   normalizeRoadmapTitle,
   shouldAutoRepairRoadmapTasks,
@@ -71,6 +72,50 @@ test('normalizeRoadmapTitle normalizes punctuation and casing', () => {
   assert.equal(
     normalizeRoadmapTitle('  Set Up The Project Foundation!  '),
     'set up the project foundation',
+  )
+})
+
+test('isLikelyGenericRoadmap catches varied generic patterns beyond exact matches', () => {
+  assert.equal(
+    isLikelyGenericRoadmap([
+      { title: 'Set up the initial project structure' },
+      { title: 'Define the core data model' },
+      { title: 'Implement the primary feature' },
+      { title: 'Add error handling and edge cases' },
+      { title: 'Build the main component' },
+    ]),
+    true,
+  )
+})
+
+test('isLikelyGenericRoadmap passes genuinely specific tasks', () => {
+  assert.equal(
+    isLikelyGenericRoadmap([
+      { title: 'Write a function that adds two numbers and returns the result' },
+      { title: 'Accept user input from the terminal and parse it as numbers' },
+      { title: 'Support subtraction, multiplication, and division operations' },
+      { title: 'Display the result back to the user with clear formatting' },
+      { title: 'Handle invalid input like letters or division by zero gracefully' },
+    ]),
+    false,
+  )
+})
+
+test('isLikelyGenericRoadmap returns false for empty or missing tasks', () => {
+  assert.equal(isLikelyGenericRoadmap([]), false)
+  assert.equal(isLikelyGenericRoadmap(null), false)
+})
+
+test('shouldAutoRepairRoadmapTasks catches generic heuristic patterns too', () => {
+  assert.equal(
+    shouldAutoRepairRoadmapTasks([
+      { title: 'Create the project foundation' },
+      { title: 'Build core functionality module' },
+      { title: 'Implement main feature logic' },
+      { title: 'Connect the data flow and state' },
+      { title: 'Handle edge cases and errors' },
+    ]),
+    true,
   )
 })
 

@@ -515,7 +515,7 @@ function App() {
     roadmapWatchdogTimeoutRef.current = window.setTimeout(() => {
       setIsGeneratingRoadmap(false)
       setUiError('Roadmap generation got stuck and was stopped. Please try again.')
-    }, 35000)
+    }, 95000)
   }, [isGeneratingRoadmap, setIsGeneratingRoadmap])
 
   useEffect(() => {
@@ -1118,7 +1118,7 @@ function App() {
             clarifyingAnswers,
             profileToPromptContext(profile),
           ),
-          30000,
+          90000,
           'Roadmap generation is taking too long. Please try again.',
         )
         if (roadmapResult.error) {

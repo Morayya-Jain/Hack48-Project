@@ -340,10 +340,27 @@ test('buildRoadmapPrompt keeps minimal no-solution guardrails and dynamic count 
 
   assert.match(prompt, /Generate a learning roadmap as 4 to 10 tasks/i)
   assert.match(prompt, /Never give complete code solutions in the description or hint fields/i)
-  assert.match(prompt, /Do not use generic phase-only titles such as Initialize, Define, Implement/i)
   assert.doesNotMatch(prompt, /Special Stage 1 requirement/i)
-  assert.match(prompt, /Allowed skill levels: beginner, intermediate, advanced, master\./i)
   assert.match(prompt, /"skillLevel": "beginner\|intermediate\|advanced\|master"/i)
+  assert.match(prompt, /Skill level: beginner/i)
+  assert.match(prompt, /MUST be "beginner"/i)
+  assert.match(prompt, /specific to building THIS/i)
+})
+
+test('buildRoadmapPrompt includes different guidance for each skill level', () => {
+  const levels = ['beginner', 'intermediate', 'advanced', 'master']
+  const prompts = levels.map((level) =>
+    buildRoadmapPrompt('calculator', { skillLevelPreference: level }, null),
+  )
+
+  for (let i = 0; i < levels.length; i++) {
+    assert.match(prompts[i], new RegExp(`Skill level: ${levels[i]}`, 'i'))
+    assert.match(prompts[i], new RegExp(`MUST be "${levels[i]}"`, 'i'))
+  }
+
+  assert.notEqual(prompts[0], prompts[1])
+  assert.notEqual(prompts[1], prompts[2])
+  assert.notEqual(prompts[2], prompts[3])
 })
 
 test('selectGeminiModel routes advanced and master to pro model', () => {

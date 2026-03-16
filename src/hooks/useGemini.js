@@ -81,27 +81,7 @@ const LOW_QUALITY_FOLLOW_UP_REGEX =
   /\b(what you should do next is do that|do that|just do it|same as above|as mentioned above|keep doing that|that should do it)\b/i
 const ACTIONABLE_FOLLOW_UP_VERB_REGEX =
   /\b(create|add|run|test|verify|check|open|write|update|rename|refactor|import|define|pass|return|log|trace|install|split|extract|replace|move|map|filter)\b/i
-const ROADMAP_ATTEMPT_TIMEOUT_MS = 8000
-const ROADMAP_FALLBACK_STOPWORDS = new Set([
-  'a',
-  'an',
-  'and',
-  'app',
-  'application',
-  'build',
-  'for',
-  'from',
-  'in',
-  'is',
-  'it',
-  'of',
-  'on',
-  'project',
-  'simple',
-  'the',
-  'to',
-  'with',
-])
+const ROADMAP_ATTEMPT_TIMEOUT_MS = 20000
 
 function truncateText(value, maxChars = 700) {
   const text = toText(value)
@@ -759,75 +739,6 @@ function normalizeRoadmapGenerationPayload(parsed) {
   }
 }
 
-function extractProjectFocusKeywords(projectDescription, maxKeywords = 3) {
-  const words = toText(projectDescription)
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter((word) => word.length > 2 && !ROADMAP_FALLBACK_STOPWORDS.has(word))
-
-  return Array.from(new Set(words)).slice(0, maxKeywords)
-}
-
-function buildLocalProjectSpecificRoadmap(projectDescription, clarifyingAnswers) {
-  const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
-  const resolvedSkillLevel = normalizeProjectSkillLevel(normalizedAnswers.skillLevelPreference)
-  const projectLabel = firstSentence(projectDescription, 'your project')
-  const keywords = extractProjectFocusKeywords(projectDescription)
-  const keywordLabel = keywords.length > 0 ? keywords.join(' ') : 'core functionality'
-
-  return normalizeRoadmapGenerationPayload({
-    skillLevel: resolvedSkillLevel,
-    tasks: [
-      {
-        id: 'ai-task-1',
-        title: `Define ${projectLabel} MVP behavior`,
-        description:
-          `List the exact user flow and expected outcomes for "${projectLabel}", including one happy path and one edge case.`,
-        hint: `Write 3-5 acceptance checks that prove the ${keywordLabel} flow works.`,
-        exampleOutput: 'Expected result: clear success criteria for the first MVP slice.',
-        language: '',
-      },
-      {
-        id: 'ai-task-2',
-        title: `Set up the initial ${projectLabel} structure`,
-        description:
-          `Create the minimal file/module structure needed to ship the first working version of "${projectLabel}".`,
-        hint: `Keep setup lean and focused on enabling the first end-to-end flow.`,
-        exampleOutput: 'Expected result: project runs with placeholder wiring for core flow.',
-        language: '',
-      },
-      {
-        id: 'ai-task-3',
-        title: `Implement core ${keywordLabel} logic`,
-        description:
-          `Build the main logic layer for "${projectLabel}" so the primary user interaction produces the right result.`,
-        hint: 'Implement one small behavior at a time and verify each with a quick manual check.',
-        exampleOutput: 'Expected result: primary interaction works for at least one realistic input.',
-        language: '',
-      },
-      {
-        id: 'ai-task-4',
-        title: `Connect interaction flow and state updates`,
-        description:
-          `Wire UI/input events to the underlying logic so "${projectLabel}" behaves consistently through the full MVP path.`,
-        hint: 'Trace one complete user journey step-by-step and confirm each state transition.',
-        exampleOutput: 'Expected result: user can complete the MVP flow without broken transitions.',
-        language: '',
-      },
-      {
-        id: 'ai-task-5',
-        title: `Harden and verify ${projectLabel}`,
-        description:
-          `Add validation and error handling for key edge cases, then run a final end-to-end verification pass.`,
-        hint: 'Test invalid/boundary input cases and confirm the app fails safely with clear feedback.',
-        exampleOutput: 'Expected result: stable MVP behavior with basic edge-case coverage.',
-        language: '',
-      },
-    ],
-  })
-}
-
 function parseRoadmapGenerationResultStrict(text) {
   const parsed = parseJsonObjectCandidate(text)
   return normalizeRoadmapGenerationPayload(parsed)
@@ -1135,31 +1046,119 @@ async function callGemini(prompt, options = {}) {
   return { data: null, error: lastError || new Error('Gemini request failed.') }
 }
 
+function buildSkillLevelGuidance(skillLevel) {
+  switch (skillLevel) {
+    case 'beginner':
+      return `Skill level: beginner
+Guidance for beginner roadmaps:
+- Break the project into small, concrete learning steps. Each task should teach ONE concept or skill.
+- Titles must name the specific thing being built or learned, not a generic phase.
+- Descriptions should explain WHY the step matters, not just WHAT to do.
+- Hints should give a concrete starting point without full solutions.
+- Include concrete expected outputs in exampleOutput so the learner knows when they succeeded.
+
+Example of GOOD beginner tasks for a "calculator" project:
+- "Write a function that adds two numbers and returns the result"
+- "Accept user input from the terminal and parse it as numbers"
+- "Support subtraction, multiplication, and division operations"
+- "Display the result back to the user with clear formatting"
+- "Handle invalid input like letters or division by zero gracefully"
+
+Example of BAD generic tasks (NEVER use these):
+- "Set up the project foundation"
+- "Implement core logic"
+- "Define data flow"`
+
+    case 'intermediate':
+      return `Skill level: intermediate
+Guidance for intermediate roadmaps:
+- Each task should be a meaningful feature slice combining 2-3 related concepts.
+- Assume the user knows basic syntax but needs guidance on architecture decisions.
+- Focus tasks on building features end-to-end (data → logic → display).
+- Include practical hints about common pitfalls.
+
+Example of GOOD intermediate tasks for a "calculator" project:
+- "Build the arithmetic engine supporting +, -, *, / with proper operator handling"
+- "Create the input parsing module that tokenizes mathematical expressions"
+- "Design the calculator UI with a button grid and expression display"
+- "Wire button interactions to the expression engine and render live results"
+- "Add expression history and the ability to reuse previous calculations"
+
+Example of BAD generic tasks (NEVER use these):
+- "Set up the project structure"
+- "Implement the first MVP feature"
+- "Handle errors and edge cases"`
+
+    case 'advanced':
+      return `Skill level: advanced
+Guidance for advanced roadmaps:
+- Focus on architecture, design decisions, and non-trivial engineering challenges.
+- Assume the user knows how to code and needs guidance on design tradeoffs.
+- Tasks should represent significant system concerns, not small steps.
+
+Example of GOOD advanced tasks for a "calculator" project:
+- "Design an expression tokenizer and recursive descent parser for operator precedence"
+- "Implement an AST evaluator that supports nested expressions and parentheses"
+- "Build a plugin architecture for user-defined functions and operators"
+- "Create a REPL interface with expression history and auto-completion"
+
+Example of BAD generic tasks (NEVER use these):
+- "Define core data and flow"
+- "Add the second key capability"
+- "Finalize and verify"`
+
+    case 'master':
+      return `Skill level: master
+Guidance for master roadmaps:
+- Focus on production-quality concerns: performance, reliability, extensibility, testing strategy.
+- Assume deep expertise. Tasks should address decisions that differentiate production code from prototypes.
+- Focus on tradeoffs and non-obvious engineering considerations.
+
+Example of GOOD master tasks for a "calculator" project:
+- "Architect a REPL with lazy evaluation, tail-call optimization, and error recovery"
+- "Design property-based testing for expression evaluation correctness"
+- "Implement a bytecode compiler for expression trees with optimization passes"
+- "Build a language server protocol integration for expression auto-complete and diagnostics"
+
+Example of BAD generic tasks (NEVER use these):
+- "Initialize project setup"
+- "Implement core functionality"
+- "Harden and verify"`
+
+    default:
+      return `Skill level: ${skillLevel}
+Tailor task complexity to this skill level. Each task must be specific to the project.`
+  }
+}
+
 export function buildRoadmapPrompt(projectDescription, clarifyingAnswers, profileContext = null) {
   const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
   const profileBlock = buildProfilePromptBlock(profileContext)
+  const skillGuidance = buildSkillLevelGuidance(normalizedAnswers.skillLevelPreference)
 
-  return `You are a coding mentor.
+  return `You are a coding mentor creating a project-specific learning roadmap.
+
 The user wants to build: ${projectDescription}.
+Every task you generate MUST be specific to building THIS project. Generic tasks that could apply to any project are unacceptable.
 
-Initial clarifying answers:
-- Selected skill level preference: ${normalizedAnswers.skillLevelPreference}
+Clarifying context:
 - Prior experience: ${normalizedAnswers.experience}
 - Smallest MVP scope: ${normalizedAnswers.scope}
 - Weekly pace/time commitment: ${normalizedAnswers.time}
 
 ${profileBlock}
 
-Infer the project skill level from the user project context.
-Allowed skill levels: beginner, intermediate, advanced, master.
-Use selected skill level preference as the target skillLevel unless it clearly conflicts with project scope.
-Always tailor the roadmap tasks intelligently based on project complexity and clarifying context.
+${skillGuidance}
 
-Generate a learning roadmap as 4 to 10 tasks.
-Each task guides the user to implement one specific piece of the project themselves.
-Never give complete code solutions in the description or hint fields.
-Do not use generic phase-only titles such as Initialize, Define, Implement, Connect, Harden, or Verify.
-Each task title/description/hint/exampleOutput must be specific to this project goal.
+CRITICAL RULES:
+- Generate a learning roadmap as 4 to 10 tasks.
+- The skillLevel in your response MUST be "${normalizedAnswers.skillLevelPreference}".
+- Every task title MUST reference a specific concept, feature, or component from this exact project. Titles like "Set up structure", "Implement core logic", "Define data flow", or "Handle errors" are FORBIDDEN because they apply to any project.
+- Never give complete code solutions in the description or hint fields.
+- Each task guides the user to implement one specific piece of the project themselves.
+- Descriptions should explain what to build and why it matters for this project.
+- Hints should give a concrete starting direction without giving away the solution.
+- exampleOutput should show what success looks like for that specific task.
 
 Return ONLY a valid raw JSON object. No markdown, no backticks, no explanation.
 Schema:
@@ -1375,8 +1374,8 @@ export function useGemini() {
         profileContext,
       )
       const firstAttempt = await callRoadmapAttempt(basePrompt, {
-        temperature: 0.55,
-        maxOutputTokens: 1200,
+        temperature: 0.65,
+        maxOutputTokens: 2000,
       })
       if (firstAttempt.error) {
         return {
@@ -1389,13 +1388,9 @@ export function useGemini() {
         const roadmap = parseRoadmapCandidate(firstAttempt.data)
         return { data: roadmap, error: null }
       } catch (firstParseError) {
-        const retryPrompt = `${basePrompt}
-You must return only raw JSON matching the schema exactly.
-Do not use generic phase titles (Initialize, Define, Implement, Connect, Harden, Verify).
-Every task must be specific to this project and MVP scope.`
-        const secondAttempt = await callRoadmapAttempt(retryPrompt, {
+        const secondAttempt = await callRoadmapAttempt(basePrompt, {
           temperature: 0.35,
-          maxOutputTokens: 1200,
+          maxOutputTokens: 2000,
         })
 
         if (secondAttempt.error) {
@@ -1418,7 +1413,7 @@ Every task must be specific to this project and MVP scope.`
           )
           const repairAttempt = await callRoadmapAttempt(repairPrompt, {
             temperature: 0.25,
-            maxOutputTokens: 1000,
+            maxOutputTokens: 1600,
           })
 
           if (repairAttempt.error) {
@@ -1454,17 +1449,13 @@ Every task must be specific to this project and MVP scope.`
                 }
                 return { data: outlineRoadmap, error: null }
               } catch {
-                // Continue to local fallback roadmap if outline parsing fails.
+                // All attempts exhausted.
               }
             }
 
-            const localFallback = buildLocalProjectSpecificRoadmap(
-              projectDescription,
-              clarifyingAnswers,
-            )
             return {
-              data: localFallback,
-              error: null,
+              data: null,
+              error: new Error('Unable to generate a project-specific roadmap. Please try again.'),
             }
           }
         }
