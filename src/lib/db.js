@@ -1,5 +1,9 @@
 import { supabase, supabaseInitError } from './supabaseClient'
 import { normalizeProfile, toProfilePayload } from './profile'
+import {
+  classifyProjectFilesError,
+  PROJECT_FILES_ERROR_KIND,
+} from './supabaseErrors'
 
 function normalizeProjectSkillLevel(value) {
   const normalized = `${value || ''}`.trim().toLowerCase()
@@ -25,13 +29,6 @@ function getSupabaseUnavailableResponse() {
     data: null,
     error: supabaseInitError || new Error('Supabase is not configured.'),
   }
-}
-
-function isProjectFilesTableMissing(error) {
-  const message = error?.message || ''
-  return /project_files|schema cache|relation .*project_files|Could not find the 'project_files'|does not exist/i.test(
-    message,
-  )
 }
 
 function isProjectTitleColumnMissing(error) {
@@ -191,6 +188,120 @@ export async function saveTasks(projectId, userId, tasks) {
   }
 }
 
+export async function replaceProjectTasks(projectId, userId, tasks) {
+  if (!supabase) {
+    return getSupabaseUnavailableResponse()
+  }
+
+  const insertTaskPayload = async (payload) => {
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert(payload)
+      .select()
+      .order('task_index', { ascending: true })
+
+    if (
+      error &&
+      /column .*language|schema cache|Could not find the 'language' column/i.test(
+        error.message || '',
+      )
+    ) {
+      const legacyPayload = payload.map((task) => {
+        const nextTask = { ...task }
+        delete nextTask.language
+        return nextTask
+      })
+
+      const { data: legacyData, error: legacyError } = await supabase
+        .from('tasks')
+        .insert(legacyPayload)
+        .select()
+        .order('task_index', { ascending: true })
+
+      if (legacyError) {
+        return { data: null, error: legacyError }
+      }
+
+      const mergedData = (legacyData ?? []).map((row, index) => ({
+        ...row,
+        language: payload[index]?.language || '',
+      }))
+
+      return { data: mergedData, error: null }
+    }
+
+    return { data, error }
+  }
+
+  try {
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+      return { data: null, error: new Error('No tasks were provided for replacement.') }
+    }
+
+    const nextPayload = tasks.map((task, index) => ({
+      project_id: projectId,
+      user_id: userId,
+      task_index: index,
+      title: task.title,
+      description: task.description,
+      hint: task.hint,
+      example_output: task.exampleOutput ?? task.example_output ?? '',
+      language: task.language || null,
+      completed: Boolean(task.completed),
+    }))
+
+    const { data: currentTasks, error: currentError } = await getProjectTasks(projectId)
+    if (currentError) {
+      return { data: null, error: currentError }
+    }
+
+    const rollbackPayload = (currentTasks ?? []).map((task, index) => ({
+      project_id: projectId,
+      user_id: userId,
+      task_index: Number.isInteger(task.task_index) ? task.task_index : index,
+      title: task.title,
+      description: task.description,
+      hint: task.hint,
+      example_output: task.example_output ?? '',
+      language: task.language || null,
+      completed: Boolean(task.completed),
+    }))
+
+    const { error: deleteError } = await supabase
+      .from('tasks')
+      .delete()
+      .eq('project_id', projectId)
+      .eq('user_id', userId)
+
+    if (deleteError) {
+      return { data: null, error: deleteError }
+    }
+
+    const { data: replacedTasks, error: replaceError } = await insertTaskPayload(nextPayload)
+    if (replaceError) {
+      if (rollbackPayload.length === 0) {
+        return { data: null, error: replaceError }
+      }
+
+      const { error: rollbackError } = await insertTaskPayload(rollbackPayload)
+      if (rollbackError) {
+        return {
+          data: null,
+          error: new Error(
+            `${replaceError.message || 'Task replacement failed.'} Rollback also failed: ${rollbackError.message || 'Unknown rollback error.'}`,
+          ),
+        }
+      }
+
+      return { data: null, error: replaceError }
+    }
+
+    return { data: replacedTasks, error: null }
+  } catch (error) {
+    return { data: null, error }
+  }
+}
+
 export async function getUserProjects(userId) {
   if (!supabase) {
     return getSupabaseUnavailableResponse()
@@ -342,7 +453,6 @@ export async function upsertProjectFile(file) {
 
   try {
     const payload = {
-      id: file.id,
       project_id: file.project_id,
       user_id: file.user_id,
       path: file.path,
@@ -353,8 +463,20 @@ export async function upsertProjectFile(file) {
       updated_at: new Date().toISOString(),
     }
 
-    if (!payload.id) {
-      delete payload.id
+    if (file.id && !`${file.id}`.startsWith('local-')) {
+      const { data: updatedRows, error: updateError } = await supabase
+        .from('project_files')
+        .update(payload)
+        .eq('id', file.id)
+        .select('*')
+
+      if (updateError) {
+        return { data: null, error: updateError }
+      }
+
+      if (Array.isArray(updatedRows) && updatedRows.length > 0) {
+        return { data: updatedRows[0], error: null }
+      }
     }
 
     const { data, error } = await supabase
@@ -400,7 +522,12 @@ export async function deleteProject(projectId, userId) {
       .eq('project_id', projectId)
       .eq('user_id', userId)
 
-    if (filesError && !isProjectFilesTableMissing(filesError)) {
+    const filesErrorKind = classifyProjectFilesError(filesError)
+    if (
+      filesError &&
+      filesErrorKind !== PROJECT_FILES_ERROR_KIND.MISSING_TABLE &&
+      filesErrorKind !== PROJECT_FILES_ERROR_KIND.SCHEMA_OUTDATED
+    ) {
       return { data: null, error: filesError }
     }
 
