@@ -101,3 +101,12 @@ test('parseFollowUpSuggestionsResultLenient recovers non-question lines by norma
   assert.equal(parsed[0], 'Explain which requirement is still missing?')
   assert.equal(parsed[1], 'Show me how to verify this step with a quick check?')
 })
+
+test('parseCodeCheckResultLenient recovers truncated JSON with no closing quote or brace', () => {
+  const input = '{"status":"FAIL","feedback":"Your code is missing the required loop structure that iterates over'
+
+  const parsed = parseCodeCheckResultLenient(input)
+  assert.equal(parsed.status, 'FAIL')
+  assert.match(parsed.feedback, /missing the required loop/i)
+  assert.equal(parsed.outputMatch, false)
+})

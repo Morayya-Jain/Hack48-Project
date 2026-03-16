@@ -126,14 +126,71 @@ function extractLooseJsonFieldValues(source, key, nextKey = '') {
 }
 
 function extractTaskFieldValues(source, key, nextKey = '') {
-  const primaryValues = nextKey
-    ? extractLooseJsonFieldValues(source, key, nextKey)
-    : []
-  if (primaryValues.length > 0) {
-    return primaryValues
+  const fallbackValues = extractLooseJsonFieldValues(source, key)
+
+  if (!nextKey) {
+    return fallbackValues
   }
 
-  return extractLooseJsonFieldValues(source, key)
+  const primaryValues = extractLooseJsonFieldValues(source, key, nextKey)
+
+  // When the fallback finds at least as many results, prefer it. The
+  // nextKey variant can accidentally capture across intermediate fields
+  // (e.g. "exampleOutput" -> "id" -> "language") producing longer,
+  // polluted values. The fallback stops at the nearest `",` or `"}` which
+  // is more reliable for malformed JSON.
+  if (fallbackValues.length >= primaryValues.length) {
+    return fallbackValues
+  }
+
+  return primaryValues
+}
+
+function repairTruncatedJson(text) {
+  let repaired = text.trimEnd()
+
+  // Detect if we are inside an unterminated string by counting unescaped quotes.
+  let inString = false
+  for (let i = 0; i < repaired.length; i++) {
+    if (repaired[i] === '\\' && inString) {
+      i++
+      continue
+    }
+    if (repaired[i] === '"') {
+      inString = !inString
+    }
+  }
+
+  if (inString) {
+    repaired += '"'
+  }
+
+  // Track unbalanced braces and brackets.
+  const stack = []
+  let inStr = false
+  for (let i = 0; i < repaired.length; i++) {
+    if (repaired[i] === '\\' && inStr) {
+      i++
+      continue
+    }
+    if (repaired[i] === '"') {
+      inStr = !inStr
+      continue
+    }
+    if (inStr) continue
+    if (repaired[i] === '{') stack.push('}')
+    else if (repaired[i] === '[') stack.push(']')
+    else if ((repaired[i] === '}' || repaired[i] === ']') && stack.length > 0) stack.pop()
+  }
+
+  // Remove trailing comma before closing.
+  repaired = repaired.replace(/,\s*$/, '')
+
+  while (stack.length > 0) {
+    repaired += stack.pop()
+  }
+
+  return repaired
 }
 
 function parseJsonObjectCandidate(text) {
@@ -166,6 +223,21 @@ function parseJsonObjectCandidate(text) {
       }
     } catch (error) {
       lastError = error
+    }
+  }
+
+  // Last resort: attempt to repair truncated JSON (e.g. from MAX_TOKENS).
+  for (const candidate of uniqueCandidates) {
+    try {
+      const repaired = repairTruncatedJson(candidate)
+      if (repaired !== candidate) {
+        const parsed = JSON.parse(repaired)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed
+        }
+      }
+    } catch {
+      // Repair did not produce valid JSON, continue.
     }
   }
 
@@ -420,7 +492,10 @@ export function getGeminiText(data) {
     return best
   }, null)
 
-  return selectedCandidate?.text || ''
+  return {
+    text: selectedCandidate?.text || '',
+    finishReason: selectedCandidate?.finishReason || '',
+  }
 }
 
 function expertiseResponseStyle(expertiseLevel) {
@@ -533,9 +608,15 @@ export function parseCodeCheckResultLenient(text) {
     source.match(/"status"\s*:\s*"(PASS|FAIL)"/i) ||
     source.match(/\b(PASS|FAIL)\b/i)
   const outputMatchMatch = source.match(/"outputMatch"\s*:\s*(true|false)/i)
-  const feedbackMatch =
+  let feedbackMatch =
     source.match(/"feedback"\s*:\s*"([\s\S]*?)"\s*,\s*"outputMatch"/i) ||
     source.match(/"feedback"\s*:\s*"([\s\S]*?)"\s*(?:,|\})/i)
+
+  // Fallback for truncated feedback (no closing quote, e.g. from MAX_TOKENS).
+  if (!feedbackMatch) {
+    feedbackMatch = source.match(/"feedback"\s*:\s*"([\s\S]+)$/i)
+  }
+
   const outputReasonMatch =
     source.match(/"outputReason"\s*:\s*"([\s\S]*?)"\s*(?:,|\})/i)
 
@@ -1015,10 +1096,14 @@ async function callGemini(prompt, options = {}) {
       }
 
       const data = await response.json()
-      const text = getGeminiText(data)
+      const { text, finishReason } = getGeminiText(data)
 
       if (!text) {
         throw new Error('Gemini returned an empty response.')
+      }
+
+      if (finishReason === 'MAX_TOKENS') {
+        console.warn('Gemini response was truncated (MAX_TOKENS). JSON parsing may fail.')
       }
 
       return { data: text, error: null }
@@ -1497,7 +1582,7 @@ export function useGemini() {
 
       const firstAttempt = await callGemini(prompt, {
         temperature: 0.2,
-        maxOutputTokens: 800,
+        maxOutputTokens: 1600,
         model,
         responseMimeType: 'application/json',
         responseSchema: CODE_CHECK_RESPONSE_SCHEMA,
@@ -1521,7 +1606,7 @@ export function useGemini() {
         const retryPrompt = `${prompt}\nYou must return only raw JSON matching the schema exactly.`
         const secondAttempt = await callGemini(retryPrompt, {
           temperature: 0.2,
-          maxOutputTokens: 800,
+          maxOutputTokens: 1600,
           model,
           responseMimeType: 'application/json',
           responseSchema: CODE_CHECK_RESPONSE_SCHEMA,

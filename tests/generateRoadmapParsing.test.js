@@ -27,8 +27,9 @@ test('getGeminiText concatenates multipart Gemini responses', () => {
     ],
   }
 
-  const text = getGeminiText(data)
-  assert.equal(text, '{ "skillLevel": "intermediate", "tasks": [{"title":"Task 1"}] }')
+  const result = getGeminiText(data)
+  assert.equal(result.text, '{ "skillLevel": "intermediate", "tasks": [{"title":"Task 1"}] }')
+  assert.equal(result.finishReason, '')
 })
 
 test('getGeminiText prefers a complete later candidate when the first is truncated', () => {
@@ -49,8 +50,26 @@ test('getGeminiText prefers a complete later candidate when the first is truncat
     ],
   }
 
-  const text = getGeminiText(data)
-  assert.equal(text, '{"skillLevel":"intermediate","tasks":[{"title":"Complete"}]}')
+  const result = getGeminiText(data)
+  assert.equal(result.text, '{"skillLevel":"intermediate","tasks":[{"title":"Complete"}]}')
+  assert.equal(result.finishReason, 'STOP')
+})
+
+test('getGeminiText returns MAX_TOKENS finishReason when only truncated candidate exists', () => {
+  const data = {
+    candidates: [
+      {
+        finishReason: 'MAX_TOKENS',
+        content: {
+          parts: [{ text: '{"status":"FAIL","feedback":"Your code is miss' }],
+        },
+      },
+    ],
+  }
+
+  const result = getGeminiText(data)
+  assert.equal(result.finishReason, 'MAX_TOKENS')
+  assert.ok(result.text.length > 0)
 })
 
 function buildTask(index) {
@@ -237,6 +256,32 @@ test('parseRoadmapGenerationResult falls back to lenient parsing for malformed J
   const parsed = parseRoadmapGenerationResult(malformed)
   assert.equal(parsed.tasks.length, 5)
   assert.match(parsed.tasks[0].description, /npm init -y/i)
+})
+
+test('parseRoadmapGenerationResultLenient does not capture id field content in exampleOutput', () => {
+  // Simulates the field order: exampleOutput -> id -> language
+  // The regex should stop at the first unescaped closing quote, not capture across "id".
+  const tasks = Array.from({ length: 5 }, (_, i) => {
+    const n = i + 1
+    return `{
+      "title": "Task ${n}",
+      "description": "Description ${n}",
+      "hint": "Hint ${n}",
+      "exampleOutput": "Output ${n}",
+      "id": "task-${n}",
+      "language": "python"
+    }`
+  }).join(',\n')
+
+  const malformed = `{
+    "skillLevel": "beginner",
+    "tasks": [ ${tasks} ]
+  }`
+
+  const parsed = parseRoadmapGenerationResultLenient(malformed)
+  assert.equal(parsed.tasks.length, 5)
+  assert.equal(parsed.tasks[0].exampleOutput, 'Output 1')
+  assert.ok(!parsed.tasks[0].exampleOutput.includes('task-1'), 'exampleOutput should not contain id field content')
 })
 
 test('parseRoadmapFromOutlineText recovers tasks from numbered non-JSON roadmap', () => {

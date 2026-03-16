@@ -24,7 +24,12 @@
       "mcp__mcp-registry__search_mcp_registry",
       "Bash(grep -n \"buildLocalProjectSpecificRoadmap\\\\|buildRoadmapPrompt\\\\|parseRoadmapFromOutlineText\" /Users/morayyajain/Developer/Hack48-Project/src/lib/*.js)",
       "Bash(export PATH=\"/usr/local/bin:/opt/homebrew/bin:$PATH\")",
-      "Bash(node -e \":*)"
+      "Bash(node -e \":*)",
+      "Bash(grep -n JSON /Users/morayyajain/Developer/Hack48-Project/tests/*.test.js)",
+      "Bash(grep -r \"SELECT\\\\|select\" /Users/morayyajain/Developer/Hack48-Project/supabase/migrations/*.sql)",
+      "mcp__supabase__list_tables",
+      "mcp__supabase__execute_sql",
+      "mcp__supabase__apply_migration"
     ]
   },
   "enableAllProjectMcpServers": true,
