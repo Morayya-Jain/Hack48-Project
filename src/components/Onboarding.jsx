@@ -7,7 +7,7 @@ import {
   STARTER_PROMPT_CARDS,
 } from '../lib/homeFlow'
 import { getProjectDisplayTitle } from '../lib/projectTitle'
-import { LANGUAGE_LABELS } from '../lib/runtimeUtils'
+import { LANGUAGE_LABELS, languagesConflict } from '../lib/runtimeUtils'
 
 const SKILL_LEVEL_CHIPS = [
   { id: 'beginner', label: 'Beginner', value: 'beginner' },
@@ -156,7 +156,6 @@ function Onboarding({
   const [suggestedLanguages, setSuggestedLanguages] = useState([])
   const [selectedLanguages, setSelectedLanguages] = useState([])
   const [isSuggestingLanguages, setIsSuggestingLanguages] = useState(false)
-  const [showAllLanguages, setShowAllLanguages] = useState(false)
   const [languageSuggestionError, setLanguageSuggestionError] = useState('')
   const descriptionInputRef = useRef(null)
 
@@ -198,11 +197,14 @@ function Onboarding({
   }
 
   const handleToggleLanguage = (languageId) => {
-    setSelectedLanguages((prev) =>
-      prev.includes(languageId)
-        ? prev.filter((id) => id !== languageId)
-        : [...prev, languageId],
-    )
+    setSelectedLanguages((prev) => {
+      if (prev.includes(languageId)) {
+        return prev.filter((id) => id !== languageId)
+      }
+      // Auto-deselect any currently-selected languages that conflict with the new pick.
+      const withoutConflicts = prev.filter((id) => !languagesConflict(languageId, id))
+      return [...withoutConflicts, languageId]
+    })
   }
 
   const handleSubmit = async (event) => {
@@ -220,11 +222,9 @@ function Onboarding({
         const languages = result?.data || ['javascript']
         setSuggestedLanguages(languages)
         setSelectedLanguages(languages)
-        setShowAllLanguages(false)
       } catch {
         setSuggestedLanguages(ALL_LANGUAGE_IDS)
         setSelectedLanguages(['javascript'])
-        setShowAllLanguages(true)
         setLanguageSuggestionError('Could not suggest languages. Please select manually.')
       } finally {
         setIsSuggestingLanguages(false)
@@ -472,17 +472,27 @@ function Onboarding({
                   ) : (
                     <>
                       <div className="mt-4 flex flex-wrap gap-2">
-                        {(showAllLanguages ? ALL_LANGUAGE_IDS : suggestedLanguages).map((langId) => {
+                        {suggestedLanguages.map((langId) => {
                           const isActive = selectedLanguages.includes(langId)
+                          const wouldConflict =
+                            !isActive &&
+                            selectedLanguages.some((sel) => languagesConflict(langId, sel))
                           return (
                             <button
                               key={langId}
                               type="button"
                               onClick={() => handleToggleLanguage(langId)}
+                              title={
+                                wouldConflict
+                                  ? `Selecting ${LANGUAGE_LABELS[langId] || langId} will deselect incompatible languages`
+                                  : undefined
+                              }
                               className={`inline-flex h-10 items-center rounded-full border px-4 text-base font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-100 ${
                                 isActive
                                   ? 'border-green-700 bg-green-600 text-white'
-                                  : 'border-slate-300 bg-white text-slate-900 hover:bg-slate-50'
+                                  : wouldConflict
+                                    ? 'border-slate-200 bg-white text-slate-400 hover:border-amber-400 hover:text-slate-700'
+                                    : 'border-slate-300 bg-white text-slate-900 hover:bg-slate-50'
                               }`}
                             >
                               {LANGUAGE_LABELS[langId] || langId}
@@ -491,16 +501,6 @@ function Onboarding({
                           )
                         })}
                       </div>
-
-                      {!showAllLanguages && suggestedLanguages.length < ALL_LANGUAGE_IDS.length ? (
-                        <button
-                          type="button"
-                          className="mt-3 text-sm font-medium text-green-700 underline hover:text-green-600"
-                          onClick={() => setShowAllLanguages(true)}
-                        >
-                          Show all languages
-                        </button>
-                      ) : null}
 
                       {selectedLanguages.length === 0 ? (
                         <p className="mt-2 text-sm text-red-600">Select at least one language to continue.</p>

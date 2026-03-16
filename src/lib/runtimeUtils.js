@@ -1,3 +1,59 @@
+// Maps each language to a paradigm family. Languages in the same family are
+// compatible; languages across conflicting families cannot coexist in one project.
+const LANGUAGE_FAMILY = {
+  javascript: 'web',
+  typescript: 'web',
+  html: 'web',
+  python: 'scripting',
+  ruby: 'scripting',
+  php: 'scripting',
+  java: 'jvm',
+  kotlin: 'jvm',
+  go: 'systems',
+  rust: 'systems',
+  csharp: 'dotnet',
+  swift: 'apple',
+  sql: 'data',
+}
+
+// Sorted pairs of families that cannot coexist (e.g. 'data|web' means sql conflicts with html/js/ts).
+const CONFLICTING_FAMILY_PAIRS = new Set([
+  'apple|dotnet',
+  'apple|jvm',
+  'apple|scripting',
+  'apple|systems',
+  'apple|web',
+  'data|web',
+  'dotnet|jvm',
+  'dotnet|scripting',
+  'dotnet|systems',
+  'dotnet|web',
+  'jvm|scripting',
+  'jvm|systems',
+  'jvm|web',
+  'scripting|systems',
+  'scripting|web',
+  'systems|web',
+])
+
+// Returns true if language a and b cannot be selected together.
+function languagesConflict(a, b) {
+  const fa = LANGUAGE_FAMILY[a]
+  const fb = LANGUAGE_FAMILY[b]
+  if (!fa || !fb || fa === fb) return false
+  return CONFLICTING_FAMILY_PAIRS.has([fa, fb].sort().join('|'))
+}
+
+// Returns a filtered LANGUAGE_CHOICES list restricted to the project's languages.
+// Always includes 'auto'. Falls back to the full list when projectLanguages is not set.
+function getProjectLanguageChoices(projectLanguages) {
+  if (!Array.isArray(projectLanguages) || projectLanguages.length === 0) {
+    return LANGUAGE_CHOICES
+  }
+  const locked = new Set(projectLanguages)
+  return LANGUAGE_CHOICES.filter((c) => c.value === 'auto' || locked.has(c.value))
+}
+
 const LANGUAGE_LABELS = {
   auto: 'Auto',
   javascript: 'JavaScript',
@@ -99,7 +155,9 @@ export {
   LANGUAGE_CHOICES,
   LANGUAGE_LABELS,
   canRunInConsole,
+  getProjectLanguageChoices,
   isPreviewLanguage,
+  languagesConflict,
   normalizeRunnableCode,
   prettyLanguageName,
   resolveRuntimeLanguage,

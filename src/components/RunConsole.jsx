@@ -3,6 +3,7 @@ import { buttonPrimary, buttonSecondary, sizeSm } from '../lib/buttonStyles'
 import {
   LANGUAGE_CHOICES,
   canRunInConsole,
+  getProjectLanguageChoices,
   isPreviewLanguage,
   normalizeRunnableCode,
   prettyLanguageName,
@@ -251,6 +252,7 @@ function RunConsole({
   detectedLanguage,
   fileLanguage = '',
   lockedLanguage = '',
+  projectLanguages = null,
   hasLockedLanguageMismatch = false,
   onResolveLockedLanguageMismatch = null,
   onRunPreview,
@@ -291,21 +293,14 @@ function RunConsole({
   )
 
   const languageChoices = useMemo(() => {
-    if (
-      normalizedLockedLanguage &&
-      !LANGUAGE_CHOICES.some((choice) => choice.value === normalizedLockedLanguage)
-    ) {
-      return [
-        ...LANGUAGE_CHOICES,
-        {
-          value: normalizedLockedLanguage,
-          label: prettyLanguageName(normalizedLockedLanguage),
-        },
-      ]
+    // Start from a project-filtered set (or all defaults when no lock is set).
+    const base = getProjectLanguageChoices(projectLanguages)
+    // Always include the task-locked language even if it's outside the project set.
+    if (normalizedLockedLanguage && !base.some((c) => c.value === normalizedLockedLanguage)) {
+      return [...base, { value: normalizedLockedLanguage, label: prettyLanguageName(normalizedLockedLanguage) }]
     }
-
-    return LANGUAGE_CHOICES
-  }, [normalizedLockedLanguage])
+    return base
+  }, [normalizedLockedLanguage, projectLanguages])
 
   const openOutputPanel = useCallback(({ scroll = false, behavior = 'smooth' } = {}) => {
     if (!scroll || typeof window === 'undefined') {

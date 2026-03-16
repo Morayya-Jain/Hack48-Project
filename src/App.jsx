@@ -2963,6 +2963,7 @@ function App() {
         detectedLanguage={detectedLanguage}
         fileLanguage={activeFileLanguage}
         lockedLanguage={lockedTaskLanguage}
+        projectLanguages={projectLanguages}
         hasLockedLanguageMismatch={hasLockedLanguageMismatch}
         onResolveLockedLanguageMismatch={handleResolveTaskLanguageMismatch}
         onRunPreview={handleRunPreview}
