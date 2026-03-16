@@ -41,7 +41,18 @@ If you are not using the Supabase CLI, run the SQL files in `supabase/migrations
 
 - `supabase/migrations/20260314_initial_schema.sql`
 
-This migration creates `projects`, `tasks`, `project_files`, and `profiles`, and applies required RLS policies.
+The migrations create and evolve `projects`, `tasks`, `project_files`, and `profiles`, and apply required RLS policies.
+
+### `project_files` Troubleshooting
+
+If you see errors about project file storage not being configured, run the latest migrations (preferred: `supabase db push`) and refresh the app.
+
+Common symptoms of outdated `project_files` schema:
+- `relation "project_files" does not exist`
+- missing `project_files` columns in schema cache
+- `no unique or exclusion constraint matching the ON CONFLICT specification`
+
+The hardening migration `supabase/migrations/20260318_harden_project_files_storage.sql` repairs missing columns, enforces `(project_id, path)` uniqueness, and reapplies required RLS policy shape.
 
 ### Supabase Auth URL Configuration (Required for Netlify)
 

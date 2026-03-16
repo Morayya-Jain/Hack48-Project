@@ -1,5 +1,9 @@
 import { supabase, supabaseInitError } from './supabaseClient'
 import { normalizeProfile, toProfilePayload } from './profile'
+import {
+  classifyProjectFilesError,
+  PROJECT_FILES_ERROR_KIND,
+} from './supabaseErrors'
 
 function normalizeProjectSkillLevel(value) {
   const normalized = `${value || ''}`.trim().toLowerCase()
@@ -25,13 +29,6 @@ function getSupabaseUnavailableResponse() {
     data: null,
     error: supabaseInitError || new Error('Supabase is not configured.'),
   }
-}
-
-function isProjectFilesTableMissing(error) {
-  const message = error?.message || ''
-  return /project_files|schema cache|relation .*project_files|Could not find the 'project_files'|does not exist/i.test(
-    message,
-  )
 }
 
 function isProjectTitleColumnMissing(error) {
@@ -342,7 +339,6 @@ export async function upsertProjectFile(file) {
 
   try {
     const payload = {
-      id: file.id,
       project_id: file.project_id,
       user_id: file.user_id,
       path: file.path,
@@ -353,8 +349,20 @@ export async function upsertProjectFile(file) {
       updated_at: new Date().toISOString(),
     }
 
-    if (!payload.id) {
-      delete payload.id
+    if (file.id && !`${file.id}`.startsWith('local-')) {
+      const { data: updatedRows, error: updateError } = await supabase
+        .from('project_files')
+        .update(payload)
+        .eq('id', file.id)
+        .select('*')
+
+      if (updateError) {
+        return { data: null, error: updateError }
+      }
+
+      if (Array.isArray(updatedRows) && updatedRows.length > 0) {
+        return { data: updatedRows[0], error: null }
+      }
     }
 
     const { data, error } = await supabase
@@ -400,7 +408,12 @@ export async function deleteProject(projectId, userId) {
       .eq('project_id', projectId)
       .eq('user_id', userId)
 
-    if (filesError && !isProjectFilesTableMissing(filesError)) {
+    const filesErrorKind = classifyProjectFilesError(filesError)
+    if (
+      filesError &&
+      filesErrorKind !== PROJECT_FILES_ERROR_KIND.MISSING_TABLE &&
+      filesErrorKind !== PROJECT_FILES_ERROR_KIND.SCHEMA_OUTDATED
+    ) {
       return { data: null, error: filesError }
     }
 

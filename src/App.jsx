@@ -70,6 +70,10 @@ import {
   sanitizeProjectTitle,
 } from './lib/projectTitle'
 import { prettyLanguageName, sanitizeLanguage } from './lib/runtimeUtils'
+import {
+  classifyProjectFilesError,
+  PROJECT_FILES_ERROR_KIND,
+} from './lib/supabaseErrors'
 
 function toText(value) {
   if (typeof value === 'string') {
@@ -149,18 +153,23 @@ function hasStoredProjectTitle(project) {
   return toText(project?.title).trim().length > 0
 }
 
-function isProjectFilesTableMissing(error) {
-  const message = error?.message || ''
-  return /project_files|schema cache|relation .*project_files|Could not find the 'project_files'|does not exist/i.test(
-    message,
-  )
-}
-
 function isProfilesTableMissing(error) {
   const message = error?.message || ''
   return /profiles|schema cache|relation .*profiles|Could not find the 'profiles'|does not exist/i.test(
     message,
   )
+}
+
+function getProjectFilesStorageWarning(kind) {
+  if (kind === PROJECT_FILES_ERROR_KIND.MISSING_TABLE) {
+    return 'Supabase project file storage table is missing. Run supabase db push (or SQL migrations in supabase/migrations) and refresh. Files are saved in this browser session only.'
+  }
+
+  return 'Supabase project file storage schema is outdated. Run latest migrations with supabase db push (or execute files in supabase/migrations) and refresh. Files are saved in this browser session only.'
+}
+
+function getProjectFilesPermissionMessage() {
+  return 'Supabase denied access to project file storage. Check your login and verify the project_files RLS policy uses auth.uid() = user_id.'
 }
 
 const SIGNUP_CONFIGURE_MIN_DURATION_MS = 3000
@@ -371,6 +380,8 @@ function App() {
   const [previewSrcDoc, setPreviewSrcDoc] = useState('')
   const [previewError, setPreviewError] = useState('')
   const [fileNotice, setFileNotice] = useState('')
+  const [projectFilesStorageMode, setProjectFilesStorageMode] = useState('supabase')
+  const [projectFilesStorageWarning, setProjectFilesStorageWarning] = useState('')
   const [isCheckingBeforeComplete, setIsCheckingBeforeComplete] = useState(false)
   const [isMarkingTaskComplete, setIsMarkingTaskComplete] = useState(false)
   const [isEditingProfile, setIsEditingProfile] = useState(false)
@@ -755,6 +766,33 @@ function App() {
     [setActiveFileId, setProjectFiles, updateUserCode],
   )
 
+  const isProjectFilesSessionOnly = projectFilesStorageMode === 'session'
+
+  const handleProjectFilesStorageError = useCallback(
+    (error, { fallbackMessage = 'Could not access project files.' } = {}) => {
+      const kind = classifyProjectFilesError(error)
+
+      if (
+        kind === PROJECT_FILES_ERROR_KIND.MISSING_TABLE ||
+        kind === PROJECT_FILES_ERROR_KIND.SCHEMA_OUTDATED
+      ) {
+        setProjectFilesStorageMode('session')
+        setProjectFilesStorageWarning(getProjectFilesStorageWarning(kind))
+        setFileError('')
+        return kind
+      }
+
+      if (kind === PROJECT_FILES_ERROR_KIND.PERMISSION_DENIED) {
+        setFileError(getProjectFilesPermissionMessage())
+        return kind
+      }
+
+      setFileError(error?.message || fallbackMessage)
+      return kind
+    },
+    [setFileError],
+  )
+
   const bootstrapProjectFiles = useCallback(
     async ({
       projectId,
@@ -769,7 +807,6 @@ function App() {
         fallbackCode,
         preferredRuntimeLanguage,
       )
-      setFileError('')
       const resolvePreferredFileId = (files) => {
         if (!preferredActiveFilePath) {
           return null
@@ -779,20 +816,21 @@ function App() {
         return matchedFile?.id || null
       }
 
+      if (isProjectFilesSessionOnly) {
+        syncWorkspaceFiles(defaultFiles, resolvePreferredFileId(defaultFiles))
+        return
+      }
+
+      setFileError('')
+
       try {
         const { data: filesData, error: filesError } = await getProjectFiles(projectId)
 
         if (filesError) {
-          if (isProjectFilesTableMissing(filesError)) {
-            setFileError(
-              'Project file storage is not configured in Supabase yet. Run the SQL setup block for project_files.',
-            )
-            syncWorkspaceFiles(defaultFiles, resolvePreferredFileId(defaultFiles))
-            return
-          }
-
           console.error(filesError)
-          setFileError(filesError.message || 'Could not load project files.')
+          handleProjectFilesStorageError(filesError, {
+            fallbackMessage: 'Could not load project files.',
+          })
           syncWorkspaceFiles(defaultFiles, resolvePreferredFileId(defaultFiles))
           return
         }
@@ -814,15 +852,10 @@ function App() {
         )
 
         if (createError) {
-          if (isProjectFilesTableMissing(createError)) {
-            setFileError(
-              'Project file storage is not configured in Supabase yet. Run the SQL setup block for project_files.',
-            )
-          } else {
-            console.error(createError)
-            setFileError(createError.message || 'Could not initialize project files.')
-          }
-
+          console.error(createError)
+          handleProjectFilesStorageError(createError, {
+            fallbackMessage: 'Could not initialize project files.',
+          })
           syncWorkspaceFiles(defaultFiles, resolvePreferredFileId(defaultFiles))
           return
         }
@@ -835,7 +868,12 @@ function App() {
         syncWorkspaceFiles(defaultFiles, resolvePreferredFileId(defaultFiles))
       }
     },
-    [setFileError, syncWorkspaceFiles],
+    [
+      handleProjectFilesStorageError,
+      isProjectFilesSessionOnly,
+      setFileError,
+      syncWorkspaceFiles,
+    ],
   )
 
   const handleSignIn = useCallback(
@@ -1402,6 +1440,10 @@ function App() {
         return
       }
 
+      if (isProjectFilesSessionOnly) {
+        return
+      }
+
       const payload = toPersistedFiles([fileToSave], currentProjectId, appUser.id)[0]
       if (!payload) {
         return
@@ -1415,15 +1457,10 @@ function App() {
       try {
         const { data, error } = await upsertProjectFile(payload)
         if (error) {
-          if (isProjectFilesTableMissing(error)) {
-            setFileError(
-              'Project file storage is not configured in Supabase yet. Run the SQL setup block for project_files.',
-            )
-            return
-          }
-
           console.error(error)
-          setFileError(error.message || 'Could not save file.')
+          handleProjectFilesStorageError(error, {
+            fallbackMessage: 'Could not save file.',
+          })
           return
         }
 
@@ -1463,6 +1500,8 @@ function App() {
       activeFileId,
       appUser,
       currentProjectId,
+      handleProjectFilesStorageError,
+      isProjectFilesSessionOnly,
       setActiveFileId,
       setFileError,
       setIsSavingFiles,
@@ -1626,11 +1665,13 @@ function App() {
       setIsSavingFiles(true)
 
       try {
-        if (!target.id.startsWith('local-')) {
+        if (!isProjectFilesSessionOnly && !target.id.startsWith('local-')) {
           const { error } = await deleteProjectFile(target.id)
           if (error) {
             console.error(error)
-            setFileError(error.message || 'Could not delete file.')
+            handleProjectFilesStorageError(error, {
+              fallbackMessage: 'Could not delete file.',
+            })
             return
           }
         }
@@ -1656,6 +1697,8 @@ function App() {
       setIsSavingFiles,
       setProjectFiles,
       updateUserCode,
+      handleProjectFilesStorageError,
+      isProjectFilesSessionOnly,
     ],
   )
 
@@ -1799,21 +1842,24 @@ function App() {
           return
         }
 
+        if (isProjectFilesSessionOnly) {
+          syncWorkspaceFiles(nextFiles)
+          showImportLanguageNotice(nextFiles)
+          return
+        }
+
         const payload = toPersistedFiles(nextFiles, currentProjectId, appUser.id)
         const { data, error } = await replaceProjectFiles(currentProjectId, appUser.id, payload)
 
         if (error) {
-          if (isProjectFilesTableMissing(error)) {
-            setFileError(
-              'Project file storage is not configured in Supabase yet. Imported files are available for this session only.',
-            )
+          console.error(error)
+          const errorKind = handleProjectFilesStorageError(error, {
+            fallbackMessage: 'Could not import project files.',
+          })
+          if (errorKind !== PROJECT_FILES_ERROR_KIND.PERMISSION_DENIED) {
             syncWorkspaceFiles(nextFiles)
             showImportLanguageNotice(nextFiles)
-            return
           }
-
-          console.error(error)
-          setFileError(error.message || 'Could not import project files.')
           return
         }
 
@@ -1830,6 +1876,8 @@ function App() {
     [
       appUser,
       currentProjectId,
+      handleProjectFilesStorageError,
+      isProjectFilesSessionOnly,
       setFileError,
       setIsImporting,
       showImportLanguageNotice,
@@ -2616,6 +2664,7 @@ function App() {
     isMarkingTaskComplete ||
     isAskingFollowUp ||
     isSavingFiles ||
+    projectFilesStorageWarning ||
     fileError ||
     fileNotice
 
@@ -2834,6 +2883,9 @@ function App() {
           {isMarkingTaskComplete && !isCheckingBeforeComplete && <p>Updating task status...</p>}
           {isAskingFollowUp && <p>Getting mentor reply...</p>}
           {isSavingFiles && <p>Saving project files...</p>}
+          {projectFilesStorageWarning && (
+            <p className="text-amber-700">{projectFilesStorageWarning}</p>
+          )}
           {fileError && <p className="text-red-600">{fileError}</p>}
           {fileNotice && <p className="text-emerald-700">{fileNotice}</p>}
         </section>
