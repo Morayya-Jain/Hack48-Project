@@ -24,6 +24,65 @@ const PATH_LANGUAGE_RULES = [
   { language: 'kotlin', extensions: ['.kt', '.kts'] },
 ]
 
+const ALWAYS_ALLOWED_EXTENSIONS = new Set([
+  '.json', '.md', '.txt', '.env', '.gitignore',
+  '.yml', '.yaml', '.toml', '.cfg', '.ini', '.lock',
+])
+
+const LANGUAGE_IMPLICIT_COMPANIONS = {
+  html: ['javascript'],
+}
+
+function getExtension(filePath) {
+  const dotIndex = filePath.lastIndexOf('.')
+  return dotIndex > 0 ? filePath.slice(dotIndex).toLowerCase() : ''
+}
+
+function getAllowedExtensions(lockedLanguages) {
+  if (!Array.isArray(lockedLanguages) || lockedLanguages.length === 0) {
+    return []
+  }
+
+  const effectiveLanguages = new Set(lockedLanguages)
+  for (const language of lockedLanguages) {
+    const companions = LANGUAGE_IMPLICIT_COMPANIONS[language]
+    if (companions) {
+      for (const companion of companions) {
+        effectiveLanguages.add(companion)
+      }
+    }
+  }
+
+  const extensions = new Set()
+  for (const rule of PATH_LANGUAGE_RULES) {
+    if (effectiveLanguages.has(rule.language)) {
+      for (const ext of rule.extensions) {
+        extensions.add(ext)
+      }
+    }
+  }
+
+  return [...extensions]
+}
+
+function isFileAllowedByLanguageLock(filePath, lockedLanguages) {
+  if (!Array.isArray(lockedLanguages) || lockedLanguages.length === 0) {
+    return true
+  }
+
+  const ext = getExtension(filePath)
+  if (!ext) {
+    return true
+  }
+
+  if (ALWAYS_ALLOWED_EXTENSIONS.has(ext)) {
+    return true
+  }
+
+  const allowed = getAllowedExtensions(lockedLanguages)
+  return allowed.includes(ext)
+}
+
 function createLocalId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `local-${crypto.randomUUID()}`
@@ -294,7 +353,50 @@ function createDefaultProjectFiles(
   projectDescription,
   userCode = '',
   preferredRuntimeLanguage = '',
+  languages = null,
 ) {
+  if (Array.isArray(languages) && languages.length > 0) {
+    const files = []
+    let sortIndex = 0
+
+    for (const lang of languages) {
+      const normalized = sanitizeLanguage(lang)
+      if (!normalized) {
+        continue
+      }
+
+      if (normalized === 'html') {
+        const defaultHtml = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Preview</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <h1>Build your feature here</h1>
+    <script src="./script.js"></script>
+  </body>
+</html>`
+        files.push(createFile('index.html', defaultHtml, sortIndex++))
+        files.push(createFile('style.css', 'body {\n  font-family: sans-serif;\n}\n', sortIndex++))
+        if (!languages.includes('javascript')) {
+          files.push(createFile('script.js', '// Add your JavaScript here\n', sortIndex++))
+        }
+      } else {
+        const starter = createStarterFileForLanguage(normalized, files)
+        if (starter) {
+          files.push({ ...starter, sort_index: sortIndex++ })
+        }
+      }
+    }
+
+    if (files.length > 0) {
+      return normalizeProjectFiles(files)
+    }
+  }
+
   const preferredLanguage = sanitizeLanguage(preferredRuntimeLanguage)
   const inferred = detectLanguage(projectDescription, userCode)
   const startLanguage = preferredLanguage || sanitizeLanguage(inferred) || 'javascript'
@@ -556,6 +658,8 @@ export {
   editorLanguageFromFile,
   fileNameFromPath,
   findFirstFileByLanguage,
+  getAllowedExtensions,
+  isFileAllowedByLanguageLock,
   normalizeProjectFiles,
   parseImportPackage,
   runtimeLanguageFromFile,

@@ -36,6 +36,11 @@ function isProjectTitleColumnMissing(error) {
   return /column .*title|schema cache|Could not find the 'title' column/i.test(message)
 }
 
+function isProjectLanguagesColumnMissing(error) {
+  const message = error?.message || ''
+  return /column .*languages|schema cache|Could not find the 'languages' column/i.test(message)
+}
+
 export async function getUserProfile(userId) {
   if (!supabase) {
     return getSupabaseUnavailableResponse()
@@ -86,7 +91,7 @@ export async function upsertUserProfile(userId, profileInput) {
   }
 }
 
-export async function createProject(userId, description, skillLevel, title = '') {
+export async function createProject(userId, description, skillLevel, title = '', languages = null) {
   if (!supabase) {
     return getSupabaseUnavailableResponse()
   }
@@ -102,20 +107,43 @@ export async function createProject(userId, description, skillLevel, title = '')
       payload.title = `${title}`.trim()
     }
 
+    if (Array.isArray(languages) && languages.length > 0) {
+      payload.languages = languages
+    }
+
     const { data, error } = await supabase
       .from('projects')
       .insert(payload)
       .select()
       .single()
 
+    if (error && payload.languages && isProjectLanguagesColumnMissing(error)) {
+      delete payload.languages
+      const { data: retryData, error: retryError } = await supabase
+        .from('projects')
+        .insert(payload)
+        .select()
+        .single()
+
+      if (retryError && payload.title && isProjectTitleColumnMissing(retryError)) {
+        delete payload.title
+        const { data: legacyData, error: legacyError } = await supabase
+          .from('projects')
+          .insert(payload)
+          .select()
+          .single()
+        return { data: legacyData, error: legacyError }
+      }
+
+      return { data: retryData, error: retryError }
+    }
+
     if (error && payload.title && isProjectTitleColumnMissing(error)) {
+      delete payload.title
+      delete payload.languages
       const { data: legacyData, error: legacyError } = await supabase
         .from('projects')
-        .insert({
-          user_id: userId,
-          description,
-          skill_level: normalizeProjectSkillLevel(skillLevel),
-        })
+        .insert(payload)
         .select()
         .single()
 

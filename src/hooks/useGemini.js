@@ -1216,10 +1216,47 @@ Tailor task complexity to this skill level. Each task must be specific to the pr
   }
 }
 
-export function buildRoadmapPrompt(projectDescription, clarifyingAnswers, profileContext = null) {
+const LANGUAGE_SUGGESTION_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    languages: {
+      type: 'ARRAY',
+      items: {
+        type: 'STRING',
+        enum: [
+          'javascript', 'typescript', 'python', 'html', 'sql',
+          'java', 'csharp', 'go', 'rust', 'ruby', 'php', 'swift', 'kotlin',
+        ],
+      },
+    },
+  },
+  required: ['languages'],
+}
+
+export function buildLanguageSuggestionPrompt(projectDescription) {
+  return `You are a coding mentor. Given a project description, determine which programming languages are needed to build it.
+
+Project description: ${toText(projectDescription)}
+
+Rules:
+- Return ONLY the languages actually needed for this specific project.
+- Consider what languages naturally work together (e.g., HTML + JavaScript + CSS for web projects).
+- For simple CLI or scripting projects, return just the one language needed.
+- Only use values from this list: javascript, typescript, python, html, sql, java, csharp, go, rust, ruby, php, swift, kotlin.
+- Note: "html" includes CSS (HTML/CSS are grouped together).
+- Return ONLY valid raw JSON. No markdown. No backticks. No explanation.
+
+Schema: {"languages": ["language1", "language2"]}`
+}
+
+export function buildRoadmapPrompt(projectDescription, clarifyingAnswers, profileContext = null, languages = null) {
   const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
   const profileBlock = buildProfilePromptBlock(profileContext)
   const skillGuidance = buildSkillLevelGuidance(normalizedAnswers.skillLevelPreference)
+
+  const languageConstraint = Array.isArray(languages) && languages.length > 0
+    ? `\nLANGUAGE CONSTRAINT: This project uses ONLY the following languages: ${languages.join(', ')}.\nAll tasks must use only these languages. The language field for each task must be one of: ${languages.join(', ')}.\nDo not suggest or reference any other programming languages.\n`
+    : `\nThe language field must be one of: javascript, typescript, python, html, sql, java, csharp, go, rust, ruby, php, swift, kotlin.\nUse language only as a task-level lock when clearly appropriate.\n`
 
   return `You are a coding mentor creating a project-specific learning roadmap.
 
@@ -1251,8 +1288,7 @@ Schema:
   "skillLevel": "beginner|intermediate|advanced|master",
   "tasks": [{ "id", "title", "description", "hint", "exampleOutput", "language" }]
 }
-The language field must be one of: javascript, typescript, python, html, sql, java, csharp, go, rust, ruby, php, swift, kotlin.
-Use language only as a task-level lock when clearly appropriate.
+${languageConstraint}
 The exampleOutput field may contain code as it is shown only when explicitly requested.`
 }
 
@@ -1400,7 +1436,38 @@ No markdown. No extra keys.`
 }
 
 export function useGemini() {
-  const generateRoadmap = useCallback(async (projectDescription, clarifyingAnswers, profileContext = null) => {
+  const suggestProjectLanguages = useCallback(async (projectDescription) => {
+    try {
+      const prompt = buildLanguageSuggestionPrompt(projectDescription)
+      const result = await callGemini(prompt, {
+        temperature: 0.3,
+        maxOutputTokens: 128,
+        model: GEMINI_MODEL_FLASH,
+        responseMimeType: 'application/json',
+        responseSchema: LANGUAGE_SUGGESTION_RESPONSE_SCHEMA,
+        retryCount: 1,
+        timeoutMs: 10000,
+      })
+
+      if (result.error) {
+        return { data: ['javascript'], error: result.error }
+      }
+
+      try {
+        const parsed = typeof result.data === 'string' ? JSON.parse(cleanJsonString(result.data)) : result.data
+        const languages = Array.isArray(parsed?.languages)
+          ? parsed.languages.map((l) => sanitizeLanguage(l)).filter(Boolean)
+          : []
+        return { data: languages.length > 0 ? languages : ['javascript'], error: null }
+      } catch {
+        return { data: ['javascript'], error: null }
+      }
+    } catch (error) {
+      return { data: ['javascript'], error }
+    }
+  }, [])
+
+  const generateRoadmap = useCallback(async (projectDescription, clarifyingAnswers, profileContext = null, languages = null) => {
     const model = selectGeminiModel(clarifyingAnswers?.skillLevelPreference)
     const normalizedAnswers = normalizeClarifyingAnswers(clarifyingAnswers)
 
@@ -1457,6 +1524,7 @@ export function useGemini() {
         projectDescription,
         clarifyingAnswers,
         profileContext,
+        languages,
       )
       const firstAttempt = await callRoadmapAttempt(basePrompt, {
         temperature: 0.65,
@@ -1787,6 +1855,7 @@ Additional mandatory quality checks:
   return {
     generateRoadmap,
     generateProjectTitle,
+    suggestProjectLanguages,
     checkUserCode,
     askFollowUp,
     suggestFollowUpQuestions,

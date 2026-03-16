@@ -7,6 +7,7 @@ import {
   STARTER_PROMPT_CARDS,
 } from '../lib/homeFlow'
 import { getProjectDisplayTitle } from '../lib/projectTitle'
+import { LANGUAGE_LABELS } from '../lib/runtimeUtils'
 
 const SKILL_LEVEL_CHIPS = [
   { id: 'beginner', label: 'Beginner', value: 'beginner' },
@@ -125,8 +126,11 @@ function ProjectListIcon({ index }) {
   return <CodeIcon />
 }
 
+const ALL_LANGUAGE_IDS = Object.keys(LANGUAGE_LABELS).filter((id) => id !== 'auto')
+
 function Onboarding({
   onSubmit,
+  onSuggestLanguages,
   projects = [],
   isLoadingProjects = false,
   deletingProjectId = null,
@@ -149,6 +153,11 @@ function Onboarding({
   const [experience, setExperience] = useState('')
   const [scope, setScope] = useState('')
   const [timeCommitment, setTimeCommitment] = useState('')
+  const [suggestedLanguages, setSuggestedLanguages] = useState([])
+  const [selectedLanguages, setSelectedLanguages] = useState([])
+  const [isSuggestingLanguages, setIsSuggestingLanguages] = useState(false)
+  const [showAllLanguages, setShowAllLanguages] = useState(false)
+  const [languageSuggestionError, setLanguageSuggestionError] = useState('')
   const descriptionInputRef = useRef(null)
 
   const welcomeName = useMemo(() => deriveWelcomeName(user), [user])
@@ -188,6 +197,14 @@ function Onboarding({
     }
   }
 
+  const handleToggleLanguage = (languageId) => {
+    setSelectedLanguages((prev) =>
+      prev.includes(languageId)
+        ? prev.filter((id) => id !== languageId)
+        : [...prev, languageId],
+    )
+  }
+
   const handleSubmit = async (event) => {
     event.preventDefault()
 
@@ -196,16 +213,46 @@ function Onboarding({
         return
       }
 
+      setIsSuggestingLanguages(true)
+      setLanguageSuggestionError('')
+      try {
+        const result = await onSuggestLanguages(trimmedDescription)
+        const languages = result?.data || ['javascript']
+        setSuggestedLanguages(languages)
+        setSelectedLanguages(languages)
+        setShowAllLanguages(false)
+      } catch {
+        setSuggestedLanguages(ALL_LANGUAGE_IDS)
+        setSelectedLanguages(['javascript'])
+        setShowAllLanguages(true)
+        setLanguageSuggestionError('Could not suggest languages. Please select manually.')
+      } finally {
+        setIsSuggestingLanguages(false)
+      }
+
       setStepIndex(1)
       return
     }
 
-    await onSubmit(trimmedDescription, {
-      skillLevelPreference: mapSkillChipToPreference(selectedSkillChip),
-      experience: experience.trim() || 'Not specified.',
-      scope: scope.trim() || 'Start with a simple MVP.',
-      time: timeCommitment.trim() || 'Moderate pace.',
-    })
+    if (stepIndex === 1) {
+      if (selectedLanguages.length === 0) {
+        return
+      }
+
+      setStepIndex(2)
+      return
+    }
+
+    await onSubmit(
+      trimmedDescription,
+      {
+        skillLevelPreference: mapSkillChipToPreference(selectedSkillChip),
+        experience: experience.trim() || 'Not specified.',
+        scope: scope.trim() || 'Start with a simple MVP.',
+        time: timeCommitment.trim() || 'Moderate pace.',
+      },
+      selectedLanguages,
+    )
   }
 
   const projectPreview = (project) => {
@@ -406,6 +453,61 @@ function Onboarding({
                     </div>
                   </div>
                 </>
+              ) : stepIndex === 1 ? (
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-6">
+                  <h2 className="text-xl font-semibold text-slate-900">Select project languages</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Based on your project, we recommend these languages. Toggle to adjust.
+                  </p>
+
+                  {languageSuggestionError ? (
+                    <p className="mt-2 text-sm text-amber-600">{languageSuggestionError}</p>
+                  ) : null}
+
+                  {isSuggestingLanguages ? (
+                    <div className="mt-4 flex items-center gap-2 text-sm text-slate-600">
+                      <LoadingSpinner className="h-4 w-4 text-slate-600" />
+                      Analyzing project languages...
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {(showAllLanguages ? ALL_LANGUAGE_IDS : suggestedLanguages).map((langId) => {
+                          const isActive = selectedLanguages.includes(langId)
+                          return (
+                            <button
+                              key={langId}
+                              type="button"
+                              onClick={() => handleToggleLanguage(langId)}
+                              className={`inline-flex h-10 items-center rounded-full border px-4 text-base font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-100 ${
+                                isActive
+                                  ? 'border-green-700 bg-green-600 text-white'
+                                  : 'border-slate-300 bg-white text-slate-900 hover:bg-slate-50'
+                              }`}
+                            >
+                              {LANGUAGE_LABELS[langId] || langId}
+                              {isActive ? <span className="ml-1.5 text-sm">✓</span> : null}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      {!showAllLanguages && suggestedLanguages.length < ALL_LANGUAGE_IDS.length ? (
+                        <button
+                          type="button"
+                          className="mt-3 text-sm font-medium text-green-700 underline hover:text-green-600"
+                          onClick={() => setShowAllLanguages(true)}
+                        >
+                          Show all languages
+                        </button>
+                      ) : null}
+
+                      {selectedLanguages.length === 0 ? (
+                        <p className="mt-2 text-sm text-red-600">Select at least one language to continue.</p>
+                      ) : null}
+                    </>
+                  )}
+                </div>
               ) : (
                 <div className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-6">
                   <h2 className="text-xl font-semibold text-slate-900">Personalize your roadmap</h2>
@@ -451,12 +553,12 @@ function Onboarding({
               )}
 
               <div className="flex flex-wrap items-center gap-2">
-                {stepIndex === 1 ? (
+                {stepIndex > 0 ? (
                   <button
                     type="button"
                     className={secondaryButtonClass}
-                    onClick={() => setStepIndex(0)}
-                    disabled={isGeneratingRoadmap}
+                    onClick={() => setStepIndex(stepIndex - 1)}
+                    disabled={isGeneratingRoadmap || isSuggestingLanguages}
                   >
                     Back
                   </button>
@@ -465,18 +567,32 @@ function Onboarding({
                 <button
                   type="submit"
                   className={primaryButtonClass}
-                  disabled={isGeneratingRoadmap || (stepIndex === 0 && !trimmedDescription)}
+                  disabled={
+                    isGeneratingRoadmap ||
+                    isSuggestingLanguages ||
+                    (stepIndex === 0 && !trimmedDescription) ||
+                    (stepIndex === 1 && selectedLanguages.length === 0)
+                  }
                 >
                   {stepIndex === 0
-                    ? 'Continue'
-                    : isGeneratingRoadmap
+                    ? isSuggestingLanguages
                       ? (
                         <span className="inline-flex items-center gap-2">
                           <LoadingSpinner className="h-4 w-4 text-white" />
-                          Generating roadmap...
+                          Analyzing...
                         </span>
                         )
-                      : 'Generate roadmap'}
+                      : 'Continue'
+                    : stepIndex === 1
+                      ? 'Continue'
+                      : isGeneratingRoadmap
+                        ? (
+                          <span className="inline-flex items-center gap-2">
+                            <LoadingSpinner className="h-4 w-4 text-white" />
+                            Generating roadmap...
+                          </span>
+                          )
+                        : 'Generate roadmap'}
                 </button>
               </div>
             </form>

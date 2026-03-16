@@ -58,6 +58,8 @@ import {
   editorLanguageFromFile,
   fileNameFromPath,
   findFirstFileByLanguage,
+  getAllowedExtensions,
+  isFileAllowedByLanguageLock,
   normalizeProjectFiles,
   runtimeLanguageFromFile,
   runtimeLanguageFromPath,
@@ -342,6 +344,7 @@ function App() {
   const {
     generateRoadmap,
     generateProjectTitle,
+    suggestProjectLanguages,
     checkUserCode,
     askFollowUp,
     suggestFollowUpQuestions,
@@ -372,6 +375,7 @@ function App() {
     fileError,
     isImporting,
     isExporting,
+    projectLanguages,
     setUser,
     setProfile,
     setCurrentProjectId,
@@ -400,6 +404,7 @@ function App() {
     setIsImporting,
     setIsExporting,
     setFeedbackHistory,
+    setProjectLanguages,
   } = useAppState()
 
   const [projects, setProjects] = useState([])
@@ -861,11 +866,13 @@ function App() {
       fallbackCode = '',
       preferredRuntimeLanguage = '',
       preferredActiveFilePath = '',
+      languages = null,
     }) => {
       const defaultFiles = createDefaultProjectFiles(
         description,
         fallbackCode,
         preferredRuntimeLanguage,
+        languages,
       )
       const resolvePreferredFileId = (files) => {
         if (!preferredActiveFilePath) {
@@ -1108,7 +1115,7 @@ function App() {
   )
 
   const handleGenerateRoadmap = useCallback(
-    async (description, clarifyingAnswers) => {
+    async (description, clarifyingAnswers, languages = null) => {
       if (!user) {
         setUiError('You must be logged in to create a project.')
         return
@@ -1124,6 +1131,7 @@ function App() {
             description,
             clarifyingAnswers,
             profileToPromptContext(profile),
+            languages,
           ),
           90000,
           'Roadmap generation is taking too long. Please try again.',
@@ -1171,12 +1179,15 @@ function App() {
           console.error(error)
         }
 
+        const validatedLanguages = Array.isArray(languages) && languages.length > 0 ? languages : null
+
         const { data: projectData, error: projectError } = await withTimeout(
           createProject(
             user.id,
             description,
             effectiveSkillLevel,
             generatedProjectTitle,
+            validatedLanguages,
           ),
           15000,
           'Saving your new project timed out. Please try again.',
@@ -1227,6 +1238,7 @@ function App() {
 
         const normalizedTasks = savedTaskData.map(normalizeTask)
 
+        setProjectLanguages(validatedLanguages)
         setCurrentProjectId(projectData.id)
         setCurrentProjectTitle(
           sanitizeProjectTitle(projectData.title || generatedProjectTitle, description),
@@ -1245,6 +1257,7 @@ function App() {
               description,
               fallbackCode: '',
               preferredRuntimeLanguage: initialTaskLanguage,
+              languages: validatedLanguages,
             }),
             15000,
             'Project files are taking too long to initialize. Opening workspace with starter files.',
@@ -1253,7 +1266,7 @@ function App() {
           console.error(bootstrapError)
           setFileError(bootstrapError.message || 'Could not initialize project files.')
           syncWorkspaceFiles(
-            createDefaultProjectFiles(description, '', initialTaskLanguage),
+            createDefaultProjectFiles(description, '', initialTaskLanguage, validatedLanguages),
           )
         }
 
@@ -1278,6 +1291,7 @@ function App() {
       setCurrentTaskIndex,
       setIsGeneratingRoadmap,
       setProjectDescription,
+      setProjectLanguages,
       setCurrentProjectTitle,
       setSkillLevel,
       setTasks,
@@ -1449,6 +1463,11 @@ function App() {
           return
         }
 
+        setProjectLanguages(
+          Array.isArray(project.languages) && project.languages.length > 0
+            ? project.languages
+            : null,
+        )
         setCurrentProjectId(project.id)
         setCurrentProjectTitle(resolvedProjectTitle)
         setProjectDescription(project.description)
@@ -1490,6 +1509,7 @@ function App() {
       setCurrentTaskIndex,
       setIsLoadingProjects,
       setProjectDescription,
+      setProjectLanguages,
       setSkillLevel,
       setTasks,
       user,
@@ -1775,6 +1795,14 @@ function App() {
         return
       }
 
+      if (!isFileAllowedByLanguageLock(safePath, projectLanguages)) {
+        const allowed = getAllowedExtensions(projectLanguages)
+        setFileError(
+          `This file type is not allowed. Project languages: ${projectLanguages.join(', ')}. Allowed extensions: ${allowed.join(', ')}`,
+        )
+        return
+      }
+
       if (projectFiles.some((file) => file.path === safePath)) {
         setFileError('A file with this path already exists.')
         return
@@ -1805,6 +1833,7 @@ function App() {
     [
       persistProjectFile,
       projectFiles,
+      projectLanguages,
       setActiveFileId,
       setFileError,
       setProjectFiles,
@@ -1818,6 +1847,14 @@ function App() {
       const safePath = sanitizeFilePath(rawPath)
       if (!safePath) {
         setFileError('Invalid file path. Use letters, numbers, -, _, ., and folder segments.')
+        return
+      }
+
+      if (!isFileAllowedByLanguageLock(safePath, projectLanguages)) {
+        const allowed = getAllowedExtensions(projectLanguages)
+        setFileError(
+          `This file type is not allowed. Project languages: ${projectLanguages.join(', ')}. Allowed extensions: ${allowed.join(', ')}`,
+        )
         return
       }
 
@@ -1851,7 +1888,7 @@ function App() {
 
       await persistProjectFile(renamed)
     },
-    [persistProjectFile, projectFiles, setFileError, setProjectFiles, showFileLanguageNotice],
+    [persistProjectFile, projectFiles, projectLanguages, setFileError, setProjectFiles, showFileLanguageNotice],
   )
 
   const handleDeleteFile = useCallback(
@@ -2829,6 +2866,7 @@ function App() {
     return (
       <Onboarding
         onSubmit={handleGenerateRoadmap}
+        onSuggestLanguages={suggestProjectLanguages}
         projects={projects}
         isLoadingProjects={isLoadingProjects}
         deletingProjectId={deletingProjectId}

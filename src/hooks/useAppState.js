@@ -25,6 +25,7 @@ const initialState = {
   fileError: '',
   isImporting: false,
   isExporting: false,
+  projectLanguages: null,
 }
 
 export function useAppState() {
@@ -70,6 +71,7 @@ export function useAppState() {
   const [fileError, setFileError] = useState(initialState.fileError)
   const [isImporting, setIsImporting] = useState(initialState.isImporting)
   const [isExporting, setIsExporting] = useState(initialState.isExporting)
+  const [projectLanguages, setProjectLanguages] = useState(initialState.projectLanguages)
 
   const updateUserCode = useCallback((code) => {
     setUserCode(code ?? '')
@@ -147,6 +149,7 @@ export function useAppState() {
     setFileError(initialState.fileError)
     setIsImporting(initialState.isImporting)
     setIsExporting(initialState.isExporting)
+    setProjectLanguages(initialState.projectLanguages)
   }, [])
 
   return {
@@ -174,6 +177,7 @@ export function useAppState() {
     fileError,
     isImporting,
     isExporting,
+    projectLanguages,
     setUser,
     setProfile,
     setCurrentProjectId,
@@ -203,5 +207,6 @@ export function useAppState() {
     setIsImporting,
     setIsExporting,
     setFeedbackHistory,
+    setProjectLanguages,
   }
 }
