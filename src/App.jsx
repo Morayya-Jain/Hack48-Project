@@ -443,6 +443,7 @@ function App() {
   const roadmapWatchdogTimeoutRef = useRef(null)
   const isSignupTransitionPendingRef = useRef(false)
   const signupConfigureLoaderStartedAtRef = useRef(0)
+  const lastInitializedUserIdRef = useRef(null)
   const {
     workspaceRef,
     centerPaneRef,
@@ -783,17 +784,23 @@ function App() {
       isHashRestoreInProgressRef.current = false
       lastNavigationIdentityRef.current = ''
       hashRestoreNonceRef.current = 0
+      lastInitializedUserIdRef.current = null
       resetApp()
       return
     }
 
+    if (lastInitializedUserIdRef.current === user.id && hasInitializedSession) {
+      return
+    }
+
+    lastInitializedUserIdRef.current = user.id
     setHasInitializedSession(false)
     hasAttemptedHashRestoreRef.current = false
     isHashRestoreInProgressRef.current = false
     lastNavigationIdentityRef.current = ''
     hashRestoreNonceRef.current = 0
     initializeAuthenticatedUser(user.id)
-  }, [initializeAuthenticatedUser, resetApp, setProfile, user])
+  }, [hasInitializedSession, initializeAuthenticatedUser, resetApp, setProfile, user])
 
   const syncWorkspaceFiles = useCallback(
     (files, preferredActiveFileId = null) => {

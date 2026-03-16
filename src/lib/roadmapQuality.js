@@ -105,6 +105,10 @@ export function shouldAutoRepairRoadmapTasks(tasks) {
   )
 }
 
+export function isStrictlyGenericRoadmap(tasks) {
+  return isKnownGenericRoadmapTasks(tasks) || isDeterministicRoadmapPattern(tasks)
+}
+
 export function getRoadmapRepairAttemptStorageKey(projectId) {
   const normalizedProjectId = toText(projectId).trim()
   if (!normalizedProjectId) {

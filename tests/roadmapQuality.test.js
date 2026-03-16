@@ -6,6 +6,7 @@ import {
   isDeterministicRoadmapPattern,
   isKnownGenericRoadmapTasks,
   isLikelyGenericRoadmap,
+  isStrictlyGenericRoadmap,
   markRoadmapRepairAttempted,
   normalizeRoadmapTitle,
   shouldAutoRepairRoadmapTasks,
@@ -116,6 +117,37 @@ test('shouldAutoRepairRoadmapTasks catches generic heuristic patterns too', () =
       { title: 'Handle edge cases and errors' },
     ]),
     true,
+  )
+})
+
+test('isStrictlyGenericRoadmap catches exact legacy and deterministic patterns', () => {
+  assert.equal(isStrictlyGenericRoadmap(buildGenericTasks()), true)
+  assert.equal(isStrictlyGenericRoadmap(buildDeterministicTasks()), true)
+})
+
+test('isStrictlyGenericRoadmap does not flag fuzzy-generic tasks', () => {
+  assert.equal(
+    isStrictlyGenericRoadmap([
+      { title: 'Create the project foundation' },
+      { title: 'Build core functionality module' },
+      { title: 'Implement main feature logic' },
+      { title: 'Connect the data flow and state' },
+      { title: 'Handle edge cases and errors' },
+    ]),
+    false,
+  )
+})
+
+test('isStrictlyGenericRoadmap passes project-specific tasks', () => {
+  assert.equal(
+    isStrictlyGenericRoadmap([
+      { title: 'Design TikTok-style video feed layout' },
+      { title: 'Implement swipe-based video navigation' },
+      { title: 'Add like and comment interactions' },
+      { title: 'Build user profile with video history' },
+      { title: 'Handle video upload and processing' },
+    ]),
+    false,
   )
 })
 

@@ -9,7 +9,7 @@ import {
   normalizeProfile,
 } from '../lib/profile.js'
 import { sanitizeProjectTitle } from '../lib/projectTitle.js'
-import { shouldAutoRepairRoadmapTasks } from '../lib/roadmapQuality.js'
+import { isStrictlyGenericRoadmap } from '../lib/roadmapQuality.js'
 import { sanitizeLanguage } from '../lib/runtimeUtils.js'
 
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
@@ -1344,7 +1344,7 @@ export function useGemini() {
 
         try {
           const roadmap = parseRoadmapGenerationResult(responseText)
-          if (shouldAutoRepairRoadmapTasks(roadmap?.tasks)) {
+          if (isStrictlyGenericRoadmap(roadmap?.tasks)) {
             throw new Error('Roadmap output was generic and needs project-specific task rewriting.')
           }
           return roadmap
@@ -1357,7 +1357,7 @@ export function useGemini() {
             responseText,
             normalizedAnswers.skillLevelPreference,
           )
-          if (shouldAutoRepairRoadmapTasks(recoveredRoadmap?.tasks)) {
+          if (isStrictlyGenericRoadmap(recoveredRoadmap?.tasks)) {
             throw new Error('Outline recovery produced a generic roadmap.')
           }
           return recoveredRoadmap
@@ -1444,7 +1444,7 @@ export function useGemini() {
                   outlineAttempt.data,
                   clarifyingAnswers?.skillLevelPreference,
                 )
-                if (shouldAutoRepairRoadmapTasks(outlineRoadmap?.tasks)) {
+                if (isStrictlyGenericRoadmap(outlineRoadmap?.tasks)) {
                   throw new Error('Outline fallback produced a generic roadmap.')
                 }
                 return { data: outlineRoadmap, error: null }
