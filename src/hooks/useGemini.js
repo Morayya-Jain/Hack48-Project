@@ -1254,8 +1254,11 @@ export function buildRoadmapPrompt(projectDescription, clarifyingAnswers, profil
   const profileBlock = buildProfilePromptBlock(profileContext)
   const skillGuidance = buildSkillLevelGuidance(normalizedAnswers.skillLevelPreference)
 
-  const languageConstraint = Array.isArray(languages) && languages.length > 0
-    ? `\nLANGUAGE CONSTRAINT: This project uses ONLY the following languages: ${languages.join(', ')}.\nAll tasks must use only these languages. The language field for each task must be one of: ${languages.join(', ')}.\nDo not suggest or reference any other programming languages.\n`
+  const safeLanguages = Array.isArray(languages)
+    ? languages.map((l) => sanitizeLanguage(l)).filter(Boolean)
+    : []
+  const languageConstraint = safeLanguages.length > 0
+    ? `\nLANGUAGE CONSTRAINT: This project uses ONLY the following languages: ${safeLanguages.join(', ')}.\nAll tasks must use only these languages. The language field for each task must be one of: ${safeLanguages.join(', ')}.\nDo not suggest or reference any other programming languages.\n`
     : `\nThe language field must be one of: javascript, typescript, python, html, sql, java, csharp, go, rust, ruby, php, swift, kotlin.\nUse language only as a task-level lock when clearly appropriate.\n`
 
   return `You are a coding mentor creating a project-specific learning roadmap.
