@@ -71,6 +71,19 @@ const FOLLOW_UP_SUGGESTIONS_RESPONSE_SCHEMA = {
   },
   required: ['suggestions'],
 }
+const LANGUAGE_SUGGESTION_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    languageGroups: {
+      type: 'ARRAY',
+      items: {
+        type: 'ARRAY',
+        items: { type: 'STRING' },
+      },
+    },
+  },
+  required: ['languageGroups'],
+}
 const DEFAULT_CLARIFYING_ANSWERS = {
   skillLevelPreference: 'beginner',
   experience: 'Not specified.',
@@ -456,7 +469,7 @@ function toText(value) {
 export function getGeminiText(data) {
   const candidates = Array.isArray(data?.candidates) ? data.candidates : []
   if (candidates.length === 0) {
-    return ''
+    return { text: '', finishReason: '' }
   }
 
   const parsedCandidates = candidates.map((candidate) => {
@@ -473,7 +486,7 @@ export function getGeminiText(data) {
 
   const nonEmptyCandidates = parsedCandidates.filter((candidate) => candidate.textLength > 0)
   if (nonEmptyCandidates.length === 0) {
-    return ''
+    return { text: '', finishReason: '' }
   }
 
   const preferredCandidates = nonEmptyCandidates.filter((candidate) => {
@@ -1473,9 +1486,10 @@ export function useGemini() {
       const prompt = buildLanguageSuggestionPrompt(projectDescription)
       const result = await callGemini(prompt, {
         temperature: 0.3,
-        maxOutputTokens: 256,
+        maxOutputTokens: 512,
         model: GEMINI_MODEL_FLASH,
         responseMimeType: 'application/json',
+        responseSchema: LANGUAGE_SUGGESTION_SCHEMA,
         retryCount: 1,
         timeoutMs: 10000,
       })
@@ -1489,11 +1503,13 @@ export function useGemini() {
         const rawGroups = Array.isArray(parsed?.languageGroups) ? parsed.languageGroups : Array.isArray(parsed) ? parsed : []
         const groups = rawGroups.map((g) => (Array.isArray(g?.langs) ? g.langs : Array.isArray(g) ? g : []))
         return { data: normalizeLanguageGroups(groups), error: null }
-      } catch {
-        return { data: normalizeLanguageGroups([]), error: null }
+      } catch (parseError) {
+        console.warn('Language suggestion parse failed:', parseError)
+        return { data: null, error: new Error('Failed to parse language suggestions.') }
       }
     } catch (error) {
-      return { data: normalizeLanguageGroups([]), error }
+      console.warn('Language suggestion request failed:', error)
+      return { data: null, error }
     }
   }, [])
 
