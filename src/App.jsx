@@ -2220,7 +2220,11 @@ function App() {
     screen,
   ])
 
-  const showHtmlPreview = runtimeLanguage === 'html'
+  const hasHtmlFile = projectFiles.some(f => {
+    const p = (f.path || f.name || '').toLowerCase()
+    return p.endsWith('.html') || p.endsWith('.htm')
+  })
+  const showHtmlPreview = runtimeLanguage === 'html' && hasHtmlFile
 
   const completedCount = useMemo(
     () => tasks.filter((task) => task.completed).length,

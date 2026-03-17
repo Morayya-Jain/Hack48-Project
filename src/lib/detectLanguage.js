@@ -59,8 +59,7 @@ function detectLanguage(description, code = '') {
   if (
     lowerSource.startsWith('<!doctype html') ||
     /^<\/?(html|head|body|main|section|article|div|span|p|h[1-6]|form|button)\b/i.test(source) ||
-    lowerSource.includes('<style') ||
-    lowerSource.includes('</')
+    lowerSource.includes('<style')
   ) {
     return 'html'
   }

@@ -464,8 +464,7 @@ function buildPreviewSrcDoc(files = []) {
       return (
         lowerPath.endsWith('.js') ||
         lowerPath.endsWith('.mjs') ||
-        lowerPath.endsWith('.cjs') ||
-        lowerPath.endsWith('.jsx')
+        lowerPath.endsWith('.cjs')
       )
     })
     .map((file) => file.content)
