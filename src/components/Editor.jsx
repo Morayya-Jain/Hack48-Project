@@ -17,8 +17,8 @@ function Editor({
   const editorHeightClass = height ? '' : 'h-[22rem] sm:h-[24rem] md:h-[28rem] lg:h-[32rem]'
 
   const sectionClass = height
-    ? 'flex min-h-0 flex-1 flex-col overflow-hidden border border-slate-700 bg-[#1E1E1E]'
-    : 'shrink-0 overflow-hidden border border-slate-700 bg-[#1E1E1E]'
+    ? 'flex min-h-0 flex-1 flex-col overflow-hidden border border-slate-300 bg-white'
+    : 'shrink-0 overflow-hidden border border-slate-300 bg-white'
 
   return (
     <section className={sectionClass}>
@@ -43,7 +43,7 @@ function Editor({
           ))}
         </div>
       ) : null}
-      <div className={editorHeightClass} style={editorHeightStyle}>
+      <div className={`bg-[#1E1E1E] ${editorHeightClass}`} style={editorHeightStyle}>
         <MonacoEditor
           height="100%"
           language={editorLanguage}
