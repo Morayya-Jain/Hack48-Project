@@ -17,7 +17,7 @@ function Editor({
   const editorHeightClass = height ? 'h-full' : 'h-[22rem] sm:h-[24rem] md:h-[28rem] lg:h-[32rem]'
 
   const sectionClass = height
-    ? 'flex min-h-0 flex-1 flex-col overflow-hidden border border-slate-300 bg-white'
+    ? 'flex min-h-0 flex-1 flex-col overflow-hidden border border-slate-300 bg-white h-full'
     : 'shrink-0 overflow-hidden border border-slate-300 bg-white'
 
   return (
