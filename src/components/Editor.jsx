@@ -13,10 +13,8 @@ function Editor({
   height,
 }) {
   const editorLanguage = language || detectLanguage(projectDescription, value)
-  const editorHeightStyle = height && height !== '100%' ? { height } : undefined
-  const editorHeightClass = height
-    ? (height === '100%' ? 'flex-1 min-h-0' : 'h-full')
-    : 'h-[22rem] sm:h-[24rem] md:h-[28rem] lg:h-[32rem]'
+  const editorHeightStyle = height ? { height } : undefined
+  const editorHeightClass = height ? 'h-full' : 'h-[22rem] sm:h-[24rem] md:h-[28rem] lg:h-[32rem]'
 
   const sectionClass = height
     ? 'flex min-h-0 flex-1 flex-col overflow-hidden border border-slate-700 bg-[#1E1E1E]'
