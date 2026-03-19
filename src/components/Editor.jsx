@@ -16,8 +16,12 @@ function Editor({
   const editorHeightStyle = height ? { height } : undefined
   const editorHeightClass = height ? 'h-full' : 'h-[22rem] sm:h-[24rem] md:h-[28rem] lg:h-[32rem]'
 
+  const sectionClass = height
+    ? 'flex min-h-0 flex-1 flex-col overflow-hidden border border-slate-300 bg-white'
+    : 'shrink-0 overflow-hidden border border-slate-300 bg-white'
+
   return (
-    <section className="shrink-0 overflow-hidden border border-slate-300 bg-white">
+    <section className={sectionClass}>
       {tabs.length > 0 ? (
         <div className="flex overflow-auto border-b border-slate-300 bg-slate-100" role="tablist">
           {tabs.map((tab) => (

@@ -43,7 +43,8 @@
       "WebFetch(domain:localhost)",
       "Bash(kill %1)",
       "Bash(wc:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(find /Users/morayyajain/Developer/Hack48-Project/src -name CenterPaneTabs* -o -name *CenterPane*)"
     ]
   },
   "enableAllProjectMcpServers": true,

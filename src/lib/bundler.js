@@ -49,7 +49,7 @@ function resolveProjectPath(importPath, resolveDir, fileMap) {
   // Normalize: strip leading ./ and resolve against resolveDir
   let candidate = importPath.replace(/^\.\//, '')
 
-  if (resolveDir && !importPath.startsWith('/')) {
+  if (resolveDir && resolveDir !== '.' && !importPath.startsWith('/')) {
     const dir = resolveDir.replace(/\/$/, '')
     candidate = dir ? `${dir}/${candidate}` : candidate
   }
@@ -163,7 +163,7 @@ async function bundleProjectFiles(files, entryPoint) {
     // The entry content is fed directly, and imports are resolved through the virtual plugin.
     const entryContent = fileMap.get(entryPoint)
     const entryLastSlash = entryPoint.lastIndexOf('/')
-    const entryDir = entryLastSlash >= 0 ? entryPoint.slice(0, entryLastSlash) : ''
+    const entryDir = entryLastSlash >= 0 ? entryPoint.slice(0, entryLastSlash) : '.'
 
     const result = await esbuild.build({
       stdin: {

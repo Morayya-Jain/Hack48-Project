@@ -28,22 +28,16 @@ function CenterPaneTabs({ codeContent, previewContent, consoleContent }) {
         ))}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {activeTab === 'code' ? (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            {codeContent}
-          </div>
-        ) : null}
-        {activeTab === 'preview' ? (
-          <div className="flex min-h-0 flex-1 flex-col p-2">
-            {previewContent}
-          </div>
-        ) : null}
-        {activeTab === 'console' ? (
-          <div className="flex min-h-0 flex-1 flex-col">
-            {consoleContent}
-          </div>
-        ) : null}
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${activeTab === 'code' ? '' : 'invisible absolute inset-0'}`}>
+          {codeContent}
+        </div>
+        <div className={`flex min-h-0 flex-1 flex-col p-2 ${activeTab === 'preview' ? '' : 'invisible absolute inset-0'}`}>
+          {previewContent}
+        </div>
+        <div className={`flex min-h-0 flex-1 flex-col ${activeTab === 'console' ? '' : 'invisible absolute inset-0'}`}>
+          {consoleContent}
+        </div>
       </div>
     </div>
   )

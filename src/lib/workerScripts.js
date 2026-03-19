@@ -145,12 +145,13 @@ self.onmessage = async (event) => {
   try {
     const pyodide = await getPyodideInstance(runId)
 
-    // Re-bind stdout/stderr to use the current runId for this execution
+    // Re-bind stdout/stderr to use this run's ID (captured by value via local const)
+    const activeRunId = runId
     pyodide.setStdout({
-      batched: (text) => emit(currentRunId, 'log', text),
+      batched: (text) => emit(activeRunId, 'log', text),
     })
     pyodide.setStderr({
-      batched: (text) => emit(currentRunId, 'stderr', text),
+      batched: (text) => emit(activeRunId, 'stderr', text),
     })
 
     const result = await pyodide.runPythonAsync(code || '')
