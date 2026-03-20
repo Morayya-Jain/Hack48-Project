@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import MonacoEditor from '@monaco-editor/react'
 import { detectLanguage } from '../lib/detectLanguage'
 
@@ -16,6 +16,7 @@ function Editor({
   const editorLanguage = language || detectLanguage(projectDescription, value)
   const containerRef = useRef(null)
   const editorRef = useRef(null)
+  const [containerHeight, setContainerHeight] = useState(0)
 
   const isFlexFill = height === '100%'
   const editorHeightStyle = (height && !isFlexFill) ? { height } : undefined
@@ -41,21 +42,28 @@ function Editor({
 
   useEffect(() => {
     if (!isFlexFill) return
-    const container = containerRef.current
-    if (!container) return
-    const observer = new ResizeObserver(() => layoutEditor())
-    observer.observe(container)
-    return () => observer.disconnect()
-  }, [isFlexFill, layoutEditor])
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const h = Math.floor(entries[0].contentRect.height)
+      if (h > 0) setContainerHeight(h)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [isFlexFill])
 
   const handleMount = useCallback((editor) => {
     editorRef.current = editor
-    requestAnimationFrame(() => requestAnimationFrame(() => layoutEditor()))
-  }, [layoutEditor])
+    if (!isFlexFill) {
+      requestAnimationFrame(() => requestAnimationFrame(() => layoutEditor()))
+    }
+  }, [isFlexFill, layoutEditor])
 
-  const monacoEditor = (
+  const monacoHeight = isFlexFill ? containerHeight : '100%'
+
+  const monacoEditor = (containerHeight > 0 || !isFlexFill) ? (
     <MonacoEditor
-      height="100%"
+      height={monacoHeight}
       language={editorLanguage}
       theme="vs-dark"
       value={value ?? ''}
@@ -67,13 +75,13 @@ function Editor({
         fontSize: 14,
         scrollBeyondLastLine: false,
         lineNumbersMinChars: 3,
-        automaticLayout: !isFlexFill,
+        automaticLayout: true,
         scrollbar: {
           alwaysConsumeMouseWheel: false,
         },
       }}
     />
-  )
+  ) : null
 
   return (
     <section className={sectionClass}>
@@ -99,10 +107,8 @@ function Editor({
         </div>
       ) : null}
       {isFlexFill ? (
-        <div className="relative min-h-0 flex-1">
-          <div ref={containerRef} className="absolute inset-0">
-            {monacoEditor}
-          </div>
+        <div ref={containerRef} className="min-h-0 flex-1">
+          {monacoEditor}
         </div>
       ) : (
         <div className={editorHeightClass} style={editorHeightStyle}>
