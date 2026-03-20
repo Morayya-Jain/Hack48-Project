@@ -50,7 +50,14 @@
       "Bash(python3 -c \":*)",
       "Bash(python3 -c \"import sys,json; print\\(json.dumps\\(json.load\\(sys.stdin\\),indent=2\\)[:500]\\)\")",
       "Bash(find /Users/morayyajain/Developer/Hack48-Project -name *.test.js -o -name *.spec.js)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(find /Users/morayyajain/Developer/Hack48-Project/node_modules/@monaco-editor/react -name *.tsx -o -name *.ts)",
+      "Bash(find /Users/morayyajain/Developer/Hack48-Project/node_modules/@monaco-editor/react -type f -name *.js)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(find /Users/morayyajain/Developer/Hack48-Project/node_modules/@monaco-editor/react -name *.ts -o -name *.tsx)",
+      "Bash(python3:*)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   },
   "enableAllProjectMcpServers": true,
