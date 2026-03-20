@@ -29,7 +29,7 @@ function CenterPaneTabs({ codeContent, previewContent, consoleContent }) {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {activeTab === 'code' ? <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{codeContent}</div> : null}
+        {activeTab === 'code' ? codeContent : null}
         {activeTab === 'preview' ? <div className="flex min-h-0 flex-1 flex-col p-2">{previewContent}</div> : null}
         {activeTab === 'console' ? <div className="flex min-h-0 flex-1 flex-col">{consoleContent}</div> : null}
       </div>

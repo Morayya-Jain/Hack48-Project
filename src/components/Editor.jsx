@@ -86,7 +86,7 @@ function Editor({
   return (
     <section className={sectionClass}>
       {tabs.length > 0 ? (
-        <div className="flex overflow-auto border-b border-slate-300 bg-slate-100" role="tablist">
+        <div className="flex shrink-0 overflow-auto border-b border-slate-300 bg-slate-100" role="tablist">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -107,7 +107,7 @@ function Editor({
         </div>
       ) : null}
       {isFlexFill ? (
-        <div ref={containerRef} className="min-h-0 flex-1">
+        <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden">
           {monacoEditor}
         </div>
       ) : (

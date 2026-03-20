@@ -3326,19 +3326,17 @@ function App() {
           {isDesktopLayout ? (
             <CenterPaneTabs
               codeContent={
-                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                  <Editor
-                    projectDescription={projectDescription}
-                    value={activeFile?.content || ''}
-                    onChange={handleEditorChange}
-                    readOnly={Boolean(currentTask?.completed) && firstIncompleteIndex !== -1}
-                    language={editorLanguage}
-                    tabs={fileTabs}
-                    activeTabId={activeFile?.id || null}
-                    onSelectTab={handleSelectFile}
-                    height="100%"
-                  />
-                </div>
+                <Editor
+                  projectDescription={projectDescription}
+                  value={activeFile?.content || ''}
+                  onChange={handleEditorChange}
+                  readOnly={Boolean(currentTask?.completed) && firstIncompleteIndex !== -1}
+                  language={editorLanguage}
+                  tabs={fileTabs}
+                  activeTabId={activeFile?.id || null}
+                  onSelectTab={handleSelectFile}
+                  height="100%"
+                />
               }
               previewContent={
                 showHtmlPreview ? (
