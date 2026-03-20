@@ -471,7 +471,6 @@ function App() {
     beginLeftResize,
     beginRightResize,
     beginCenterResize,
-    beginCenterBottomResize,
     toggleLeftCollapsed,
     toggleRightCollapsed,
     toggleBottomPaneCollapsed,
@@ -3032,7 +3031,6 @@ function App() {
   const isRightDragActive = activeDragType === 'right'
   const isCenterDragActive =
     activeDragType === 'center' || activeDragType === 'center-bottom'
-  const isCenterBottomDragActive = activeDragType === 'center-bottom'
   const leftDesktopWidth = leftCollapsed ? `${railWidthPx}px` : `${leftWidthPct}%`
   const rightDesktopWidth = rightCollapsed ? `${railWidthPx}px` : `${rightWidthPct}%`
   const leftPaneStyle = isDesktopLayout
@@ -3087,7 +3085,7 @@ function App() {
         onResolveLockedLanguageMismatch={handleResolveTaskLanguageMismatch}
         onRunPreview={handleRunPreview}
         onCheckCode={handleCheckCode}
-        fillHeight={isDesktopLayout && !showHtmlPreview}
+        fillHeight={!isDesktopLayout}
       />
     </ErrorBoundary>
   )
@@ -3325,7 +3323,7 @@ function App() {
           className="flex min-w-0 flex-1 flex-col gap-3 border-b border-slate-200 bg-white p-3 md:h-[calc(100svh-150px)] md:border-b-0 md:border-r md:p-4"
         >
           <ErrorBoundary zone="editor">
-          {isDesktopLayout && showHtmlPreview ? (
+          {isDesktopLayout ? (
             <CenterPaneTabs
               codeContent={
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -3343,17 +3341,23 @@ function App() {
                 </div>
               }
               previewContent={
-                <PreviewPanel
-                  srcDoc={previewSrcDoc}
-                  error={previewError}
-                  onPreviewConsole={handlePreviewConsole}
-                />
+                showHtmlPreview ? (
+                  <PreviewPanel
+                    srcDoc={previewSrcDoc}
+                    error={previewError}
+                    onPreviewConsole={handlePreviewConsole}
+                  />
+                ) : (
+                  <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
+                    Preview is available for HTML projects
+                  </div>
+                )
               }
               consoleContent={consolePane}
             />
           ) : (
             <>
-              <div className={isDesktopLayout ? 'min-h-0 shrink-0' : ''}>
+              <div>
                 <Editor
                   projectDescription={projectDescription}
                   value={activeFile?.content || ''}
@@ -3367,7 +3371,7 @@ function App() {
                 />
               </div>
 
-              {isDesktopLayout && !bottomPaneCollapsed ? (
+              {!bottomPaneCollapsed ? (
                 <div
                   className="group relative -my-1 flex h-2 shrink-0 cursor-row-resize items-center justify-center"
                   onPointerDown={beginCenterResize}
@@ -3396,40 +3400,13 @@ function App() {
                 </div>
               ) : null}
 
-              {isDesktopLayout ? (
-                bottomPaneCollapsed ? (
-                  <div className="flex h-10 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-slate-50">
-                    <button
-                      type="button"
-                      className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                      onClick={toggleBottomPaneCollapsed}
-                    >
-                      Expand Run &amp; Output
-                    </button>
-                  </div>
-                ) : (
+              {bottomPaneCollapsed ? null : (
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                       {runAndPreviewPane}
                     </div>
-                    <div
-                      className="group relative mt-1 flex h-2 shrink-0 cursor-row-resize items-center justify-center"
-                      onPointerDown={beginCenterBottomResize}
-                      role="separator"
-                      aria-orientation="horizontal"
-                      aria-label="Resize output pane from bottom edge"
-                    >
-                      <div
-                        className={`h-px w-full bg-slate-300 transition-opacity ${
-                          isCenterBottomDragActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                        }`}
-                      />
-                    </div>
                   </div>
-                )
-              ) : (
-                runAndPreviewPane
-              )}
+                )}
             </>
           )}
           </ErrorBoundary>
